@@ -1,0 +1,10 @@
+{
+  "name": "repoviewer",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Git repository visualization as generative pixel art islands",
+  "scripts": {
+    "fetch": "node fetch-data.js",
+    "serve": "npx serve ."
+  }
+}

@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Repoviewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0d1117;
+    color: #c9d1d9;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    overflow: hidden;
+    user-select: none;
+  }
+  canvas { display: block; }
+
+  #ui {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 16px 24px;
+    background: linear-gradient(transparent, rgba(13,17,23,0.95) 30%);
+    pointer-events: none;
+  }
+  #ui > * { pointer-events: auto; }
+
+  #controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+
+  #play-btn {
+    background: none;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 0.2s;
+  }
+  #play-btn:hover { border-color: #58a6ff; }
+
+  #timeline {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    background: #21262d;
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+  #timeline::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #58a6ff;
+    cursor: pointer;
+  }
+
+  #speed-btn {
+    background: none;
+    border: 1px solid #30363d;
+    color: #8b949e;
+    padding: 4px 10px;
+    border-radius: 12px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: inherit;
+  }
+
+  #info-bar {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #8b949e;
+  }
+  #commit-msg { color: #c9d1d9; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #date-display { color: #58a6ff; }
+
+  #header {
+    position: fixed;
+    top: 20px;
+    left: 24px;
+    font-size: 14px;
+    color: #8b949e;
+  }
+  #header h1 { font-size: 20px; color: #c9d1d9; font-weight: 600; margin-bottom: 4px; }
+  #header .stats { font-size: 12px; }
+
+  #tooltip {
+    position: fixed;
+    display: none;
+    background: rgba(22,27,34,0.95);
+    border: 1px solid #30363d;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    pointer-events: none;
+    z-index: 100;
+    max-width: 300px;
+    line-height: 1.5;
+  }
+  #tooltip .filepath { color: #58a6ff; font-weight: 600; }
+  #tooltip .detail { color: #8b949e; }
+
+  #loading {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 12px;
+    font-size: 16px;
+    color: #8b949e;
+  }
+  #loading .spinner {
+    width: 24px;
+    height: 24px;
+    border: 2px solid #30363d;
+    border-top-color: #58a6ff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #legend {
+    position: fixed;
+    top: 20px;
+    right: 24px;
+    font-size: 11px;
+    color: #8b949e;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .legend-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <div>Loading repository data...</div>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<div id="header" style="display:none">
+  <h1 id="repo-name"></h1>
+  <div class="stats" id="repo-stats"></div>
+</div>
+
+<div id="legend" style="display:none">
+  <div class="legend-item"><div class="legend-swatch" style="background:#2ecc71"></div> Fresh</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#3d6b3f"></div> Mature</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#6b5a3e"></div> Aging</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#4a4a52"></div> Legacy</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#38383e"></div> Ancient</div>
+</div>
+
+<div id="ui" style="display:none">
+  <div id="controls">
+    <button id="play-btn">&#9654;</button>
+    <input type="range" id="timeline" min="0" max="1000" value="0">
+    <button id="speed-btn">1x</button>
+  </div>
+  <div id="info-bar">
+    <span id="commit-msg"></span>
+    <span id="date-display"></span>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+// ===================== CONFIG =====================
+const BLOCK_SIZE = 8;
+const OCEAN_COLOR = '#0d1117';
+const TERRITORY_PAD = 4;
+const FILE_PAD = 1;
+const ISLAND_MARGIN = 0.12; // fraction of canvas reserved for ocean margin
+
+const AGE_STAGES = [
+  { pos: 0.0,  r: 46,  g: 204, b: 113 }, // Fresh
+  { pos: 0.25, r: 61,  g: 107, b: 63  }, // Mature
+  { pos: 0.5,  r: 107, g: 90,  b: 62  }, // Aging
+  { pos: 0.75, r: 74,  g: 74,  b: 82  }, // Legacy
+  { pos: 1.0,  r: 56,  g: 56,  b: 62  }, // Ancient
+];
+
+const FLASH_ADD_COLOR = { r: 46, g: 204, b: 113 };
+const FLASH_DEL_COLOR = { r: 192, g: 57, b: 43 };
+const FLASH_DURATION = 800; // ms
+
+const SPEEDS = [0.5, 1, 2, 5, 10];
+let speedIndex = 1;
+let animSpeed = SPEEDS[speedIndex];
+
+// ===================== STATE =====================
+let repoData = null;
+let snapshots = [];      // state after each commit
+let layout = null;       // current treemap layout
+let currentFrame = 0;    // index into snapshots
+let playing = false;
+let lastTimestamp = 0;
+let accumulator = 0;
+const MS_PER_FRAME = 2000; // base ms per commit at 1x speed
+let flashEffects = [];   // [{fileKey, type:'add'|'del', startTime, blocks}]
+let hoveredFile = null;
+
+// Canvas
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+// ===================== DATA LOADING =====================
+async function loadData() {
+  const res = await fetch('data/fullfeel.json');
+  if (!res.ok) throw new Error('Failed to load data/fullfeel.json — did you run: node fetch-data.js ?');
+  return res.json();
+}
+
+// ===================== PATCH PARSING =====================
+function parseHunks(patch) {
+  if (!patch) return [];
+  const lines = patch.split('\n');
+  const hunks = [];
+  let current = null;
+
+  for (const line of lines) {
+    const m = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+    if (m) {
+      current = {
+        oldStart: parseInt(m[1]),
+        oldCount: parseInt(m[2] ?? '1'),
+        newStart: parseInt(m[3]),
+        newCount: parseInt(m[4] ?? '1'),
+        lines: [],
+      };
+      hunks.push(current);
+    } else if (current) {
+      if (line.startsWith('+'))      current.lines.push({ type: 'add' });
+      else if (line.startsWith('-')) current.lines.push({ type: 'del' });
+      else if (line.startsWith(' ')) current.lines.push({ type: 'ctx' });
+      // ignore \ No newline at end of file
+    }
+  }
+  return hunks;
+}
+
+function applyPatch(lineArray, patch, date, sha) {
+  if (!patch) {
+    // No patch data — mark all lines as touched
+    return lineArray.map(() => ({ date, sha }));
+  }
+
+  const result = [...lineArray];
+  const hunks = parseHunks(patch);
+  let offset = 0;
+
+  for (const hunk of hunks) {
+    let pos = hunk.oldStart - 1 + offset;
+
+    for (const line of hunk.lines) {
+      if (line.type === 'ctx') {
+        pos++;
+      } else if (line.type === 'del') {
+        if (pos < result.length) result.splice(pos, 1);
+        offset--;
+      } else if (line.type === 'add') {
+        result.splice(pos, 0, { date, sha });
+        pos++;
+        offset++;
+      }
+    }
+  }
+  return result;
+}
+
+// ===================== SNAPSHOT BUILDER =====================
+function buildSnapshots(data) {
+  // fileStates: Map<filepath, [{date, sha}]> where index = line number
+  const fileStates = new Map();
+  const snaps = [];
+
+  for (const commit of data.commits) {
+    // Track which files were added/deleted/modified in this commit
+    const changed = { added: [], removed: [], modified: [] };
+
+    for (const file of commit.files) {
+      const key = file.filename;
+
+      if (file.status === 'added') {
+        const lines = Array(file.additions).fill({ date: commit.date, sha: commit.sha });
+        fileStates.set(key, lines);
+        changed.added.push(key);
+
+      } else if (file.status === 'removed') {
+        changed.removed.push(key);
+        fileStates.delete(key);
+
+      } else if (file.status === 'renamed') {
+        const old = fileStates.get(file.previous_filename) || [];
+        fileStates.delete(file.previous_filename);
+        const newLines = applyPatch(old, file.patch, commit.date, commit.sha);
+        fileStates.set(key, newLines);
+        changed.removed.push(file.previous_filename);
+        changed.added.push(key);
+
+      } else {
+        // modified, changed, etc.
+        const old = fileStates.get(key) || [];
+        const newLines = applyPatch(old, file.patch, commit.date, commit.sha);
+        fileStates.set(key, newLines);
+        changed.modified.push(key);
+      }
+    }
+
+    // Save snapshot (deep copy of file states)
+    const filesSnapshot = {};
+    for (const [path, lines] of fileStates) {
+      filesSnapshot[path] = {
+        lines: lines.length,
+        blame: [...lines], // array of {date, sha}
+      };
+    }
+
+    // Find associated PR
+    const pr = data.pullRequests.find(p => p.mergeCommitSha === commit.sha);
+
+    snaps.push({
+      sha: commit.sha,
+      message: commit.message,
+      date: commit.date,
+      author: commit.author,
+      files: filesSnapshot,
+      changed,
+      pr: pr || null,
+    });
+  }
+
+  return snaps;
+}
+
+// ===================== TREEMAP LAYOUT =====================
+function worstAspectRatio(row, sideLength) {
+  if (row.length === 0) return Infinity;
+  const totalArea = row.reduce((s, a) => s + a, 0);
+  const thickness = totalArea / sideLength;
+  let worst = 0;
+  for (const area of row) {
+    const len = area / thickness;
+    const ratio = Math.max(thickness / len, len / thickness);
+    if (ratio > worst) worst = ratio;
+  }
+  return worst;
+}
+
+function layoutStrip(items, rect, totalArea) {
+  if (items.length === 0) return [];
+  if (items.length === 1) {
+    return [{ ...items[0], x: rect.x, y: rect.y, w: rect.w, h: rect.h }];
+  }
+
+  const shortSide = Math.min(rect.w, rect.h);
+
+  // Build best row
+  let rowAreas = [items[0].area];
+  let rowItems = [items[0]];
+
+  for (let i = 1; i < items.length; i++) {
+    const testRow = [...rowAreas, items[i].area];
+    if (worstAspectRatio(testRow, shortSide) <= worstAspectRatio(rowAreas, shortSide)) {
+      rowAreas = testRow;
+      rowItems.push(items[i]);
+    } else {
+      break;
+    }
+  }
+
+  const rowTotal = rowAreas.reduce((s, a) => s + a, 0);
+  const results = [];
+
+  if (rect.w >= rect.h) {
+    const stripW = rowTotal / rect.h;
+    let y = rect.y;
+    for (const item of rowItems) {
+      const itemH = item.area / stripW;
+      results.push({ ...item, x: rect.x, y, w: stripW, h: itemH });
+      y += itemH;
+    }
+    const remaining = items.slice(rowItems.length);
+    if (remaining.length > 0) {
+      results.push(...layoutStrip(remaining, {
+        x: rect.x + stripW, y: rect.y, w: rect.w - stripW, h: rect.h,
+      }, totalArea - rowTotal));
+    }
+  } else {
+    const stripH = rowTotal / rect.w;
+    let x = rect.x;
+    for (const item of rowItems) {
+      const itemW = item.area / stripH;
+      results.push({ ...item, x, y: rect.y, w: itemW, h: stripH });
+      x += itemW;
+    }
+    const remaining = items.slice(rowItems.length);
+    if (remaining.length > 0) {
+      results.push(...layoutStrip(remaining, {
+        x: rect.x, y: rect.y + stripH, w: rect.w, h: rect.h - stripH,
+      }, totalArea - rowTotal));
+    }
+  }
+
+  return results;
+}
+
+function computeTreemap(filesObj, canvasW, canvasH) {
+  const mx = canvasW * ISLAND_MARGIN;
+  const my = canvasH * ISLAND_MARGIN;
+  const islandRect = { x: mx, y: my, w: canvasW - mx * 2, h: canvasH - my * 2 };
+
+  // Group by top-level folder
+  const folders = {};
+  for (const [path, file] of Object.entries(filesObj)) {
+    const parts = path.split('/');
+    const folder = parts.length > 1 ? parts[0] : '(root)';
+    if (!folders[folder]) folders[folder] = [];
+    folders[folder].push({ path, lines: file.lines, blame: file.blame });
+  }
+
+  // Compute folder sizes
+  const folderItems = Object.entries(folders).map(([name, files]) => ({
+    name,
+    files,
+    value: files.reduce((s, f) => s + Math.max(f.lines, 1), 0),
+  })).sort((a, b) => b.value - a.value);
+
+  const totalValue = folderItems.reduce((s, f) => s + f.value, 0);
+  const totalArea = islandRect.w * islandRect.h;
+
+  // Assign areas to folders
+  const folderLayouts = folderItems.map(f => ({
+    ...f,
+    area: (f.value / totalValue) * totalArea,
+  }));
+
+  // First level: folders
+  const folderRects = layoutStrip(folderLayouts, islandRect, totalArea);
+
+  // Second level: files within each folder
+  const result = { territories: [], files: [] };
+
+  for (const folderRect of folderRects) {
+    const innerRect = {
+      x: folderRect.x + TERRITORY_PAD,
+      y: folderRect.y + TERRITORY_PAD,
+      w: folderRect.w - TERRITORY_PAD * 2,
+      h: folderRect.h - TERRITORY_PAD * 2,
+    };
+
+    result.territories.push({
+      name: folderRect.name,
+      x: folderRect.x,
+      y: folderRect.y,
+      w: folderRect.w,
+      h: folderRect.h,
+    });
+
+    if (innerRect.w <= 0 || innerRect.h <= 0) continue;
+
+    const fileItems = folderRect.files
+      .map(f => ({
+        path: f.path,
+        blame: f.blame,
+        lines: f.lines,
+        value: Math.max(f.lines, 1),
+      }))
+      .sort((a, b) => b.value - a.value);
+
+    const fileTotalValue = fileItems.reduce((s, f) => s + f.value, 0);
+    const fileTotalArea = innerRect.w * innerRect.h;
+
+    const fileLayouts = fileItems.map(f => ({
+      ...f,
+      area: (f.value / fileTotalValue) * fileTotalArea,
+    }));
+
+    const fileRects = layoutStrip(fileLayouts, innerRect, fileTotalArea);
+
+    for (const fr of fileRects) {
+      result.files.push({
+        path: fr.path,
+        blame: fr.blame,
+        lines: fr.lines,
+        x: fr.x + FILE_PAD,
+        y: fr.y + FILE_PAD,
+        w: fr.w - FILE_PAD * 2,
+        h: fr.h - FILE_PAD * 2,
+        folder: folderRect.name,
+      });
+    }
+  }
+
+  return result;
+}
+
+// ===================== COLOR =====================
+function ageToColor(normalizedAge) {
+  const t = Math.max(0, Math.min(1, normalizedAge));
+
+  for (let i = 0; i < AGE_STAGES.length - 1; i++) {
+    if (t <= AGE_STAGES[i + 1].pos) {
+      const a = AGE_STAGES[i], b = AGE_STAGES[i + 1];
+      const f = (t - a.pos) / (b.pos - a.pos);
+      return {
+        r: Math.round(a.r + (b.r - a.r) * f),
+        g: Math.round(a.g + (b.g - a.g) * f),
+        b: Math.round(a.b + (b.b - a.b) * f),
+      };
+    }
+  }
+  const last = AGE_STAGES[AGE_STAGES.length - 1];
+  return { r: last.r, g: last.g, b: last.b };
+}
+
+function colorToCSS(c) {
+  return `rgb(${c.r},${c.g},${c.b})`;
+}
+
+function lerpColor(a, b, t) {
+  return {
+    r: Math.round(a.r + (b.r - a.r) * t),
+    g: Math.round(a.g + (b.g - a.g) * t),
+    b: Math.round(a.b + (b.b - a.b) * t),
+  };
+}
+
+// ===================== RENDERING =====================
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+
+function computeMedianLifespan(snapshot) {
+  // Compute the median time span between the oldest and newest lines across all files
+  const dates = [];
+  for (const file of Object.values(snapshot.files)) {
+    for (const line of file.blame) {
+      dates.push(new Date(line.date).getTime());
+    }
+  }
+  if (dates.length === 0) return 1;
+  const sorted = dates.sort((a, b) => a - b);
+  const range = sorted[sorted.length - 1] - sorted[0];
+  return Math.max(range, 24 * 60 * 60 * 1000); // at least 1 day
+}
+
+function drawOcean() {
+  ctx.fillStyle = OCEAN_COLOR;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Subtle ocean texture — sparse dots
+  const now = performance.now();
+  ctx.fillStyle = 'rgba(30,40,55,0.4)';
+  const seed = Math.floor(now / 3000);
+  for (let i = 0; i < 80; i++) {
+    const hash = (seed * 31 + i * 97) & 0xFFFF;
+    const x = (hash * 7 + i * 131) % canvas.width;
+    const y = (hash * 13 + i * 67) % canvas.height;
+    const sz = 1 + (hash % 3);
+    const alpha = 0.15 + 0.1 * Math.sin(now / 2000 + i);
+    ctx.globalAlpha = alpha;
+    ctx.fillRect(x, y, sz, sz);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawIsland(snapshot, now) {
+  if (!layout) return;
+
+  const currentDate = new Date(snapshot.date).getTime();
+  const lifespan = computeMedianLifespan(snapshot);
+
+  // Draw territory backgrounds
+  for (const t of layout.territories) {
+    ctx.fillStyle = 'rgba(22,27,34,0.6)';
+    roundRect(ctx, t.x, t.y, t.w, t.h, 4);
+    ctx.fill();
+  }
+
+  // Draw file blocks
+  for (const file of layout.files) {
+    if (file.w < 2 || file.h < 2) continue;
+
+    const cols = Math.max(1, Math.floor(file.w / BLOCK_SIZE));
+    const rows = Math.max(1, Math.floor(file.h / BLOCK_SIZE));
+    const totalBlocks = cols * rows;
+    const linesPerBlock = Math.max(1, file.lines / totalBlocks);
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const blockIndex = r * cols + c;
+        const lineStart = Math.floor(blockIndex * linesPerBlock);
+        const lineEnd = Math.min(Math.floor((blockIndex + 1) * linesPerBlock), file.lines);
+
+        // Find the most recent date in this block's line range
+        let newestDate = 0;
+        for (let l = lineStart; l < lineEnd && l < file.blame.length; l++) {
+          const d = new Date(file.blame[l].date).getTime();
+          if (d > newestDate) newestDate = d;
+        }
+        if (newestDate === 0 && file.blame.length > 0) {
+          newestDate = new Date(file.blame[0].date).getTime();
+        }
+
+        const age = (currentDate - newestDate) / lifespan;
+        let color = ageToColor(age);
+
+        // Check for flash effects
+        for (const fx of flashEffects) {
+          if (fx.path === file.path) {
+            const elapsed = now - fx.startTime;
+            if (elapsed < FLASH_DURATION) {
+              const t = elapsed / FLASH_DURATION;
+              const flashColor = fx.type === 'add' ? FLASH_ADD_COLOR : FLASH_DEL_COLOR;
+              const intensity = 1 - t * t; // ease out
+              color = lerpColor(color, flashColor, intensity * 0.7);
+            }
+          }
+        }
+
+        const bx = file.x + c * BLOCK_SIZE;
+        const by = file.y + r * BLOCK_SIZE;
+        ctx.fillStyle = colorToCSS(color);
+        ctx.fillRect(bx, by, BLOCK_SIZE - 1, BLOCK_SIZE - 1);
+      }
+    }
+  }
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function drawPRBanner(pr, now, startTime) {
+  const elapsed = now - startTime;
+  const duration = 2000;
+  if (elapsed > duration) return;
+
+  const t = elapsed / duration;
+  const alpha = t < 0.2 ? t / 0.2 : t > 0.7 ? (1 - t) / 0.3 : 1;
+
+  ctx.save();
+  ctx.globalAlpha = alpha * 0.9;
+  ctx.fillStyle = '#161b22';
+  ctx.strokeStyle = '#58a6ff';
+  ctx.lineWidth = 1;
+
+  const text = `PR #${pr.number}: ${pr.title}`;
+  ctx.font = '14px JetBrains Mono, Fira Code, Courier New, monospace';
+  const tw = ctx.measureText(text).width;
+  const bw = tw + 32;
+  const bh = 36;
+  const bx = (canvas.width - bw) / 2;
+  const by = canvas.height * 0.15;
+
+  roundRect(ctx, bx, by, bw, bh, 6);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = '#58a6ff';
+  ctx.fillText(text, bx + 16, by + 23);
+  ctx.restore();
+}
+
+// ===================== ANIMATION =====================
+let prBanner = null; // {pr, startTime}
+
+function tick(timestamp) {
+  if (!lastTimestamp) lastTimestamp = timestamp;
+  const dt = timestamp - lastTimestamp;
+  lastTimestamp = timestamp;
+
+  if (playing && snapshots.length > 0) {
+    accumulator += dt * animSpeed;
+
+    if (accumulator >= MS_PER_FRAME && currentFrame < snapshots.length - 1) {
+      accumulator -= MS_PER_FRAME;
+      setFrame(currentFrame + 1);
+    }
+
+    // Auto-stop at end
+    if (currentFrame >= snapshots.length - 1) {
+      playing = false;
+      updatePlayButton();
+    }
+  }
+
+  // Render
+  drawOcean();
+  if (snapshots.length > 0 && layout) {
+    drawIsland(snapshots[currentFrame], timestamp);
+  }
+  if (prBanner && timestamp - prBanner.startTime < 2500) {
+    drawPRBanner(prBanner.pr, timestamp, prBanner.startTime);
+  }
+
+  // Clean old flash effects
+  flashEffects = flashEffects.filter(fx => timestamp - fx.startTime < FLASH_DURATION);
+
+  requestAnimationFrame(tick);
+}
+
+function setFrame(idx) {
+  const oldFrame = currentFrame;
+  currentFrame = Math.max(0, Math.min(idx, snapshots.length - 1));
+
+  const snap = snapshots[currentFrame];
+
+  // Recompute layout
+  layout = computeTreemap(snap.files, canvas.width, canvas.height);
+
+  // Trigger flash effects for changes (only when advancing forward)
+  if (currentFrame > oldFrame) {
+    const now = performance.now();
+    for (const path of snap.changed.added) {
+      flashEffects.push({ path, type: 'add', startTime: now });
+    }
+    for (const path of snap.changed.modified) {
+      flashEffects.push({ path, type: 'add', startTime: now });
+    }
+    for (const path of snap.changed.removed) {
+      flashEffects.push({ path, type: 'del', startTime: now });
+    }
+
+    // PR banner
+    if (snap.pr) {
+      prBanner = { pr: snap.pr, startTime: now };
+    }
+  }
+
+  // Update UI
+  updateUI(snap);
+}
+
+function updateUI(snap) {
+  const slider = document.getElementById('timeline');
+  slider.value = Math.round((currentFrame / Math.max(1, snapshots.length - 1)) * 1000);
+
+  document.getElementById('commit-msg').textContent = snap.message;
+  document.getElementById('date-display').textContent = new Date(snap.date).toLocaleDateString('en-US', {
+    year: 'numeric', month: 'short', day: 'numeric',
+  });
+
+  const fileCount = Object.keys(snap.files).length;
+  const totalLines = Object.values(snap.files).reduce((s, f) => s + f.lines, 0);
+  document.getElementById('repo-stats').textContent =
+    `${fileCount} files · ${totalLines.toLocaleString()} lines · commit ${currentFrame + 1}/${snapshots.length}`;
+}
+
+function updatePlayButton() {
+  document.getElementById('play-btn').innerHTML = playing ? '&#9646;&#9646;' : '&#9654;';
+}
+
+// ===================== INTERACTION =====================
+function setupControls() {
+  const playBtn = document.getElementById('play-btn');
+  const slider = document.getElementById('timeline');
+  const speedBtn = document.getElementById('speed-btn');
+
+  playBtn.addEventListener('click', () => {
+    if (currentFrame >= snapshots.length - 1 && !playing) {
+      // Restart from beginning
+      setFrame(0);
+    }
+    playing = !playing;
+    updatePlayButton();
+  });
+
+  slider.addEventListener('input', () => {
+    const frac = parseInt(slider.value) / 1000;
+    const idx = Math.round(frac * (snapshots.length - 1));
+    playing = false;
+    updatePlayButton();
+    setFrame(idx);
+  });
+
+  speedBtn.addEventListener('click', () => {
+    speedIndex = (speedIndex + 1) % SPEEDS.length;
+    animSpeed = SPEEDS[speedIndex];
+    speedBtn.textContent = `${animSpeed}x`;
+  });
+
+  // Keyboard
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') {
+      e.preventDefault();
+      playBtn.click();
+    } else if (e.code === 'ArrowRight') {
+      playing = false;
+      updatePlayButton();
+      setFrame(currentFrame + 1);
+    } else if (e.code === 'ArrowLeft') {
+      playing = false;
+      updatePlayButton();
+      setFrame(currentFrame - 1);
+    }
+  });
+
+  // Tooltip on hover
+  canvas.addEventListener('mousemove', (e) => {
+    const tooltip = document.getElementById('tooltip');
+    if (!layout) { tooltip.style.display = 'none'; return; }
+
+    const mx = e.clientX, my = e.clientY;
+    let found = null;
+
+    for (const file of layout.files) {
+      if (mx >= file.x && mx <= file.x + file.w && my >= file.y && my <= file.y + file.h) {
+        found = file;
+        break;
+      }
+    }
+
+    if (found) {
+      hoveredFile = found.path;
+      const snap = snapshots[currentFrame];
+      const fileData = snap.files[found.path];
+      tooltip.innerHTML = `
+        <div class="filepath">${found.path}</div>
+        <div class="detail">${found.lines} lines · ${found.folder}/</div>
+      `;
+      tooltip.style.display = 'block';
+      tooltip.style.left = (mx + 12) + 'px';
+      tooltip.style.top = (my - 8) + 'px';
+
+      // Keep tooltip in viewport
+      const tr = tooltip.getBoundingClientRect();
+      if (tr.right > window.innerWidth) {
+        tooltip.style.left = (mx - tr.width - 12) + 'px';
+      }
+      if (tr.bottom > window.innerHeight) {
+        tooltip.style.top = (my - tr.height - 8) + 'px';
+      }
+    } else {
+      hoveredFile = null;
+      tooltip.style.display = 'none';
+    }
+  });
+
+  canvas.addEventListener('mouseleave', () => {
+    document.getElementById('tooltip').style.display = 'none';
+    hoveredFile = null;
+  });
+
+  // Resize
+  window.addEventListener('resize', () => {
+    resizeCanvas();
+    if (snapshots.length > 0) {
+      layout = computeTreemap(snapshots[currentFrame].files, canvas.width, canvas.height);
+    }
+  });
+}
+
+// ===================== INIT =====================
+async function init() {
+  resizeCanvas();
+  setupControls();
+  requestAnimationFrame(tick);
+
+  try {
+    repoData = await loadData();
+
+    // Build snapshots
+    snapshots = buildSnapshots(repoData);
+    console.log(`Built ${snapshots.length} snapshots`);
+
+    // Setup UI
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('ui').style.display = '';
+    document.getElementById('header').style.display = '';
+    document.getElementById('legend').style.display = '';
+    document.getElementById('repo-name').textContent =
+      `${repoData.repo.owner}/${repoData.repo.name}`;
+
+    // Start at first frame
+    setFrame(0);
+
+  } catch (err) {
+    document.getElementById('loading').innerHTML =
+      `<div style="color:#f85149">Error: ${err.message}</div>
+       <div style="font-size:13px;margin-top:8px">Run <code>node fetch-data.js</code> first, then <code>npx serve .</code></div>`;
+    console.error(err);
+  }
+}
+
+init();
+</script>
+</body>
+</html>
