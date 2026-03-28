@@ -7,7 +7,7 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: #0d1117;
+    background: #191942;
     color: #c9d1d9;
     font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
     overflow: hidden;
@@ -21,7 +21,7 @@
     left: 0;
     right: 0;
     padding: 16px 24px;
-    background: linear-gradient(transparent, rgba(13,17,23,0.95) 30%);
+    background: linear-gradient(transparent, rgba(25,25,66,0.95) 30%);
     pointer-events: none;
   }
   #ui > * { pointer-events: auto; }
@@ -173,8 +173,9 @@
   <div class="legend-item"><div class="legend-swatch" style="background:#2ecc71"></div> Fresh</div>
   <div class="legend-item"><div class="legend-swatch" style="background:#3d6b3f"></div> Mature</div>
   <div class="legend-item"><div class="legend-swatch" style="background:#6b5a3e"></div> Aging</div>
-  <div class="legend-item"><div class="legend-swatch" style="background:#4a4a52"></div> Legacy</div>
-  <div class="legend-item"><div class="legend-swatch" style="background:#38383e"></div> Ancient</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#8c7850"></div> Weathered</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#b2a480"></div> Legacy</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#afafa8"></div> Ancient</div>
 </div>
 
 <div id="ui" style="display:none">
@@ -194,22 +195,32 @@
 <script>
 // ===================== CONFIG =====================
 const BLOCK_SIZE = 8;
-const OCEAN_COLOR = '#0d1117';
-const TERRITORY_PAD = 4;
-const FILE_PAD = 1;
-const ISLAND_MARGIN = 0.12; // fraction of canvas reserved for ocean margin
+const OCEAN_COLOR = '#191942';
+const FILE_BORDER = 0.5; // thin border between files (px)
+const ISLAND_GAP = 0;    // no gap — unified island
 
 const AGE_STAGES = [
-  { pos: 0.0,  r: 46,  g: 204, b: 113 }, // Fresh
-  { pos: 0.25, r: 61,  g: 107, b: 63  }, // Mature
-  { pos: 0.5,  r: 107, g: 90,  b: 62  }, // Aging
-  { pos: 0.75, r: 74,  g: 74,  b: 82  }, // Legacy
-  { pos: 1.0,  r: 56,  g: 56,  b: 62  }, // Ancient
+  { pos: 0.0,  r: 46,  g: 204, b: 113 }, // Fresh green
+  { pos: 0.2,  r: 61,  g: 107, b: 63  }, // Mature dark green
+  { pos: 0.4,  r: 107, g: 90,  b: 62  }, // Aging brown
+  { pos: 0.6,  r: 140, g: 120, b: 80  }, // Weathered
+  { pos: 0.8,  r: 178, g: 164, b: 128 }, // Legacy sandy beige
+  { pos: 1.0,  r: 175, g: 175, b: 168 }, // Ancient light gray
 ];
 
-const FLASH_ADD_COLOR = { r: 46, g: 204, b: 113 };
-const FLASH_DEL_COLOR = { r: 192, g: 57, b: 43 };
-const FLASH_DURATION = 800; // ms
+// Folder hue tints — subtle shifts to differentiate territories without borders
+const FOLDER_TINTS = [
+  { r: 0, g: 0, b: 0 },      // no tint
+  { r: 8, g: -4, b: -4 },    // warm
+  { r: -4, g: 4, b: 8 },     // cool
+  { r: 6, g: 6, b: -6 },     // yellow
+  { r: -6, g: 4, b: 6 },     // teal
+  { r: 6, g: -2, b: 6 },     // magenta
+  { r: -4, g: 6, b: -2 },    // green
+  { r: 4, g: -4, b: 8 },     // blue
+];
+
+const TRANSITION_DURATION = 2500; // ms for morph animation — slow geological movement
 
 const SPEEDS = [0.5, 1, 2, 5, 10];
 let speedIndex = 1;
@@ -224,8 +235,13 @@ let playing = false;
 let lastTimestamp = 0;
 let accumulator = 0;
 const MS_PER_FRAME = 2000; // base ms per commit at 1x speed
-let flashEffects = [];   // [{fileKey, type:'add'|'del', startTime, blocks}]
 let hoveredFile = null;
+let prevLayout = null;
+let nextLayout = null;
+let transitionProgress = 0;
+let isTransitioning = false;
+let transitionMap = null; // {continuing, entering, exiting}
+let isSeek = false; // true when user drags slider
 
 // Canvas
 const canvas = document.getElementById('canvas');
@@ -360,166 +376,300 @@ function buildSnapshots(data) {
   return snaps;
 }
 
-// ===================== TREEMAP LAYOUT =====================
-function worstAspectRatio(row, sideLength) {
-  if (row.length === 0) return Infinity;
-  const totalArea = row.reduce((s, a) => s + a, 0);
-  const thickness = totalArea / sideLength;
-  let worst = 0;
-  for (const area of row) {
-    const len = area / thickness;
-    const ratio = Math.max(thickness / len, len / thickness);
-    if (ratio > worst) worst = ratio;
-  }
-  return worst;
+// ===================== NOISE (for organic coastline) =====================
+// Simple value noise — fast, good enough for coastline wobble
+const _noiseP = [];
+for (let i = 0; i < 256; i++) _noiseP.push(i);
+for (let i = 255; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [_noiseP[i], _noiseP[j]] = [_noiseP[j], _noiseP[i]]; }
+const _noisePerm = [..._noiseP, ..._noiseP];
+function noise2D(x, y) {
+  const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+  const xf = x - Math.floor(x), yf = y - Math.floor(y);
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const aa = _noisePerm[_noisePerm[X] + Y], ab = _noisePerm[_noisePerm[X] + Y + 1];
+  const ba = _noisePerm[_noisePerm[X + 1] + Y], bb = _noisePerm[_noisePerm[X + 1] + Y + 1];
+  const l1 = aa / 255 + u * (ba / 255 - aa / 255);
+  const l2 = ab / 255 + u * (bb / 255 - ab / 255);
+  return l1 + v * (l2 - l1);
 }
 
-function layoutStrip(items, rect, totalArea) {
-  if (items.length === 0) return [];
-  if (items.length === 1) {
-    return [{ ...items[0], x: rect.x, y: rect.y, w: rect.w, h: rect.h }];
-  }
+// ===================== MOUNTAIN ISLAND LAYOUT =====================
+// Files placed side by side, heights proportional to size,
+// smoothed so adjacent files don't differ too much.
+// Stable positions: files never swap — tectonic plates, not rafts.
 
-  const shortSide = Math.min(rect.w, rect.h);
+const MOUNTAIN_ALPHA = 0.5;
+const MAX_ADJ_HEIGHT_DIFF = 32; // max pixel height difference between neighbors
 
-  // Build best row
-  let rowAreas = [items[0].area];
-  let rowItems = [items[0]];
+// Persistent file order — computed once from final snapshot
+let stableFileOrder = []; // array of file paths, left to right
 
-  for (let i = 1; i < items.length; i++) {
-    const testRow = [...rowAreas, items[i].area];
-    if (worstAspectRatio(testRow, shortSide) <= worstAspectRatio(rowAreas, shortSide)) {
-      rowAreas = testRow;
-      rowItems.push(items[i]);
+function buildStableOrder(snapshots) {
+  // Use the last snapshot to define the canonical layout
+  const finalSnap = snapshots[snapshots.length - 1];
+  const files = Object.entries(finalSnap.files).map(([path, f]) => ({
+    path, value: Math.max(f.lines, 1),
+  }));
+  files.sort((a, b) => b.value - a.value);
+
+  // Build center-out order: largest in center, alternate right/left
+  const order = [];
+  for (let i = 0; i < files.length; i++) {
+    if (i === 0) {
+      order.push(files[i].path);
+    } else if (i % 2 === 1) {
+      order.push(files[i].path); // right
     } else {
-      break;
+      order.unshift(files[i].path); // left
     }
   }
-
-  const rowTotal = rowAreas.reduce((s, a) => s + a, 0);
-  const results = [];
-
-  if (rect.w >= rect.h) {
-    const stripW = rowTotal / rect.h;
-    let y = rect.y;
-    for (const item of rowItems) {
-      const itemH = item.area / stripW;
-      results.push({ ...item, x: rect.x, y, w: stripW, h: itemH });
-      y += itemH;
-    }
-    const remaining = items.slice(rowItems.length);
-    if (remaining.length > 0) {
-      results.push(...layoutStrip(remaining, {
-        x: rect.x + stripW, y: rect.y, w: rect.w - stripW, h: rect.h,
-      }, totalArea - rowTotal));
-    }
-  } else {
-    const stripH = rowTotal / rect.w;
-    let x = rect.x;
-    for (const item of rowItems) {
-      const itemW = item.area / stripH;
-      results.push({ ...item, x, y: rect.y, w: itemW, h: stripH });
-      x += itemW;
-    }
-    const remaining = items.slice(rowItems.length);
-    if (remaining.length > 0) {
-      results.push(...layoutStrip(remaining, {
-        x: rect.x, y: rect.y + stripH, w: rect.w, h: rect.h - stripH,
-      }, totalArea - rowTotal));
-    }
-  }
-
-  return results;
+  return order;
 }
 
 function computeTreemap(filesObj, canvasW, canvasH) {
-  const mx = canvasW * ISLAND_MARGIN;
-  const my = canvasH * ISLAND_MARGIN;
-  const islandRect = { x: mx, y: my, w: canvasW - mx * 2, h: canvasH - my * 2 };
-
-  // Group by top-level folder
-  const folders = {};
+  const allFiles = [];
   for (const [path, file] of Object.entries(filesObj)) {
     const parts = path.split('/');
     const folder = parts.length > 1 ? parts[0] : '(root)';
-    if (!folders[folder]) folders[folder] = [];
-    folders[folder].push({ path, lines: file.lines, blame: file.blame });
+    allFiles.push({
+      path, blame: file.blame, lines: file.lines,
+      value: Math.max(file.lines, 1), folder,
+    });
+  }
+  if (allFiles.length === 0) return { files: [] };
+
+  const fileMap = new Map(allFiles.map(f => [f.path, f]));
+
+  // Assign folder indices
+  const folderNames = [...new Set(allFiles.map(f => f.folder))].sort();
+  for (const f of allFiles) f.folderIdx = folderNames.indexOf(f.folder);
+
+  // Use stable order, filtering to only files present in this snapshot
+  const orderedFiles = stableFileOrder
+    .filter(p => fileMap.has(p))
+    .map(p => fileMap.get(p));
+  if (orderedFiles.length === 0) return { files: [] };
+
+  const totalValue = orderedFiles.reduce((s, f) => s + f.value, 0);
+  const maxValue = Math.max(...orderedFiles.map(f => f.value));
+
+  const H_max = canvasH * 0.6;
+  const W_island = canvasW * 0.7;
+
+  // Compute initial dimensions
+  for (const f of orderedFiles) {
+    f.h = H_max * Math.pow(f.value / maxValue, MOUNTAIN_ALPHA);
+    f.w = Math.max(BLOCK_SIZE, (f.value / totalValue) * W_island);
   }
 
-  // Compute folder sizes
-  const folderItems = Object.entries(folders).map(([name, files]) => ({
-    name,
-    files,
-    value: files.reduce((s, f) => s + Math.max(f.lines, 1), 0),
-  })).sort((a, b) => b.value - a.value);
-
-  const totalValue = folderItems.reduce((s, f) => s + f.value, 0);
-  const totalArea = islandRect.w * islandRect.h;
-
-  // Assign areas to folders
-  const folderLayouts = folderItems.map(f => ({
-    ...f,
-    area: (f.value / totalValue) * totalArea,
-  }));
-
-  // First level: folders
-  const folderRects = layoutStrip(folderLayouts, islandRect, totalArea);
-
-  // Second level: files within each folder
-  const result = { territories: [], files: [] };
-
-  for (const folderRect of folderRects) {
-    const innerRect = {
-      x: folderRect.x + TERRITORY_PAD,
-      y: folderRect.y + TERRITORY_PAD,
-      w: folderRect.w - TERRITORY_PAD * 2,
-      h: folderRect.h - TERRITORY_PAD * 2,
-    };
-
-    result.territories.push({
-      name: folderRect.name,
-      x: folderRect.x,
-      y: folderRect.y,
-      w: folderRect.w,
-      h: folderRect.h,
-    });
-
-    if (innerRect.w <= 0 || innerRect.h <= 0) continue;
-
-    const fileItems = folderRect.files
-      .map(f => ({
-        path: f.path,
-        blame: f.blame,
-        lines: f.lines,
-        value: Math.max(f.lines, 1),
-      }))
-      .sort((a, b) => b.value - a.value);
-
-    const fileTotalValue = fileItems.reduce((s, f) => s + f.value, 0);
-    const fileTotalArea = innerRect.w * innerRect.h;
-
-    const fileLayouts = fileItems.map(f => ({
-      ...f,
-      area: (f.value / fileTotalValue) * fileTotalArea,
-    }));
-
-    const fileRects = layoutStrip(fileLayouts, innerRect, fileTotalArea);
-
-    for (const fr of fileRects) {
-      result.files.push({
-        path: fr.path,
-        blame: fr.blame,
-        lines: fr.lines,
-        x: fr.x + FILE_PAD,
-        y: fr.y + FILE_PAD,
-        w: fr.w - FILE_PAD * 2,
-        h: fr.h - FILE_PAD * 2,
-        folder: folderRect.name,
-      });
+  // --- Smooth heights: adjacent files can't differ by more than MAX_ADJ_HEIGHT_DIFF px ---
+  // Multiple passes, alternating direction for even propagation
+  for (let pass = 0; pass < 6; pass++) {
+    const forward = pass % 2 === 0;
+    const start = forward ? 0 : orderedFiles.length - 2;
+    const end = forward ? orderedFiles.length - 1 : -1;
+    const step = forward ? 1 : -1;
+    for (let i = start; i !== end; i += step) {
+      const a = orderedFiles[i], b = orderedFiles[i + 1];
+      const diff = Math.abs(a.h - b.h);
+      if (diff > MAX_ADJ_HEIGHT_DIFF) {
+        const shorter = a.h < b.h ? a : b;
+        const taller = a.h < b.h ? b : a;
+        const areaOld = shorter.w * shorter.h;
+        shorter.h = taller.h - MAX_ADJ_HEIGHT_DIFF;
+        shorter.w = Math.max(BLOCK_SIZE, areaOld / shorter.h);
+      }
     }
   }
 
-  return result;
+  // --- Snap widths to BLOCK_SIZE multiples (eliminates sub-pixel gaps) ---
+  for (const f of orderedFiles) {
+    f.w = Math.max(BLOCK_SIZE, Math.round(f.w / BLOCK_SIZE) * BLOCK_SIZE);
+    f.h = Math.max(BLOCK_SIZE, Math.round(f.h / BLOCK_SIZE) * BLOCK_SIZE);
+  }
+
+  // --- Place left to right, vertically centered ---
+  const totalW = orderedFiles.reduce((s, f) => s + f.w, 0);
+  let curX = (canvasW - totalW) / 2; // center the whole island
+  const midY = canvasH * 0.5;
+
+  const placed = [];
+  for (const f of orderedFiles) {
+    f.x = curX;
+    f.y = midY - f.h / 2;
+    curX += f.w;
+    placed.push(f);
+  }
+
+  return { files: placed };
+}
+
+// ===================== EASING =====================
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+// Geological easing: slow heavy start (pressure building), then movement, long settle
+function easeTectonic(t) {
+  // Slow start (0-30%), accelerate (30-60%), decelerate with micro-overshoot and long settle (60-100%)
+  if (t < 0.3) {
+    // Slow pressure build — quintic ease-in
+    const s = t / 0.3;
+    return 0.15 * (s * s * s * s * s);
+  } else if (t < 0.6) {
+    // Main movement
+    const s = (t - 0.3) / 0.3;
+    return 0.15 + 0.7 * (s * (2 - s)); // ease-out quadratic within this phase
+  } else {
+    // Long settle with tiny overshoot
+    const s = (t - 0.6) / 0.4;
+    const overshoot = Math.sin(s * Math.PI) * 0.03 * (1 - s);
+    return 0.85 + 0.15 * (s * s * (3 - 2 * s)) + overshoot;
+  }
+}
+
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+// ===================== TRANSITION SYSTEM =====================
+function buildTransitionMap(prev, next) {
+  const prevMap = new Map();
+  const nextMap = new Map();
+
+  if (prev) for (const f of prev.files) prevMap.set(f.path, f);
+  if (next) for (const f of next.files) nextMap.set(f.path, f);
+
+  const continuing = [];
+  const entering = [];
+  const exiting = [];
+
+  // Files in both layouts
+  for (const [path, nf] of nextMap) {
+    const pf = prevMap.get(path);
+    if (pf) {
+      continuing.push({ path, from: { x: pf.x, y: pf.y, w: pf.w, h: pf.h }, to: { x: nf.x, y: nf.y, w: nf.w, h: nf.h }, fileData: nf });
+    } else {
+      entering.push({ path, to: { x: nf.x, y: nf.y, w: nf.w, h: nf.h }, fileData: nf });
+    }
+  }
+
+  // Files only in previous
+  for (const [path, pf] of prevMap) {
+    if (!nextMap.has(path)) {
+      exiting.push({ path, from: { x: pf.x, y: pf.y, w: pf.w, h: pf.h }, fileData: pf });
+    }
+  }
+
+  // Compute center of changed files (for ripple delays)
+  const changedCenters = [];
+  for (const e of entering) changedCenters.push({ cx: e.to.x + e.to.w / 2, cy: e.to.y + e.to.h / 2 });
+  for (const e of exiting) changedCenters.push({ cx: e.from.x + e.from.w / 2, cy: e.from.y + e.from.h / 2 });
+  for (const c of continuing) {
+    const dx = c.to.x - c.from.x, dy = c.to.y - c.from.y, dw = c.to.w - c.from.w, dh = c.to.h - c.from.h;
+    if (Math.abs(dw) > 2 || Math.abs(dh) > 2) {
+      changedCenters.push({ cx: c.to.x + c.to.w / 2, cy: c.to.y + c.to.h / 2 });
+    }
+  }
+
+  // Assign delay to continuing files based on distance to nearest changed file
+  for (const c of continuing) {
+    const fx = (c.from.x + c.to.x) / 2 + (c.from.w + c.to.w) / 4;
+    const fy = (c.from.y + c.to.y) / 2 + (c.from.h + c.to.h) / 4;
+    let minDist = Infinity;
+    for (const cc of changedCenters) {
+      const d = Math.hypot(fx - cc.cx, fy - cc.cy);
+      if (d < minDist) minDist = d;
+    }
+    c.delay = changedCenters.length > 0 ? Math.min(0.3, minDist * 0.0008) : 0;
+  }
+
+  return { continuing, entering, exiting };
+}
+
+function buildInterpolatedLayout(tMap, t) {
+  const dimMap = new Map();
+  const gt = easeTectonic(t); // global easing for widths — all in lockstep
+
+  // Compute target total width (lerp between prev and next totals)
+  let prevTotalW = 0, nextTotalW = 0;
+  for (const c of tMap.continuing) { prevTotalW += c.from.w; nextTotalW += c.to.w; }
+  for (const e of tMap.entering) { nextTotalW += e.to.w; }
+  for (const e of tMap.exiting) { prevTotalW += e.from.w; }
+  const targetTotalW = prevTotalW + (nextTotalW - prevTotalW) * gt;
+
+  // Continuing files — width in lockstep, height with delay
+  for (const c of tMap.continuing) {
+    const heightT = clamp((t - c.delay) / (1 - c.delay), 0, 1);
+    const ht = easeTectonic(heightT);
+    dimMap.set(c.path, {
+      fileData: c.fileData,
+      w: c.from.w + (c.to.w - c.from.w) * gt,
+      h: c.from.h + (c.to.h - c.from.h) * ht,
+      _entering: false,
+      _exiting: false,
+      _transitionT: t,
+    });
+  }
+
+  // Entering files — width in lockstep, height grows with delay
+  for (const e of tMap.entering) {
+    dimMap.set(e.path, {
+      fileData: e.fileData,
+      w: e.to.w * gt,
+      h: e.to.h * easeTectonic(clamp((t - 0.15) / 0.6, 0, 1)),
+      _entering: true,
+      _exiting: false,
+      _transitionT: t,
+    });
+  }
+
+  // Exiting files — shrink in lockstep
+  for (const e of tMap.exiting) {
+    dimMap.set(e.path, {
+      fileData: e.fileData,
+      w: e.from.w * (1 - gt),
+      h: e.from.h * (1 - gt),
+      _entering: false,
+      _exiting: true,
+      _transitionT: t,
+    });
+  }
+
+  // Collect ordered files with their interpolated dims
+  const orderedDims = [];
+  for (const path of stableFileOrder) {
+    const d = dimMap.get(path);
+    if (d && d.w >= 0.5) orderedDims.push(d);
+  }
+
+  // Normalize widths so they sum exactly to targetTotalW — eliminates gaps
+  const rawTotalW = orderedDims.reduce((s, d) => s + d.w, 0);
+  if (rawTotalW > 0) {
+    const scale = targetTotalW / rawTotalW;
+    for (const d of orderedDims) d.w *= scale;
+  }
+
+  // Place contiguously, vertically centered
+  const files = [];
+  const midY = canvas.height * 0.5;
+  const finalTotalW = orderedDims.reduce((s, d) => s + d.w, 0);
+  let curX = (canvas.width - finalTotalW) / 2;
+
+  for (const d of orderedDims) {
+    if (d.h < 0.5) { curX += d.w; continue; }
+    files.push({
+      ...d.fileData,
+      x: curX,
+      y: midY - d.h / 2,
+      w: d.w,
+      h: d.h,
+      _entering: d._entering,
+      _exiting: d._exiting,
+      _transitionT: d._transitionT,
+    });
+    curX += d.w;
+  }
+
+  return { files };
 }
 
 // ===================== COLOR =====================
@@ -579,7 +729,7 @@ function drawOcean() {
 
   // Subtle ocean texture — sparse dots
   const now = performance.now();
-  ctx.fillStyle = 'rgba(30,40,55,0.4)';
+  ctx.fillStyle = 'rgba(25,25,80,0.4)';
   const seed = Math.floor(now / 3000);
   for (let i = 0; i < 80; i++) {
     const hash = (seed * 31 + i * 97) & 0xFFFF;
@@ -593,30 +743,64 @@ function drawOcean() {
   ctx.globalAlpha = 1;
 }
 
-function drawIsland(snapshot, now) {
-  if (!layout) return;
+function drawIsland(snapshot, now, renderLayout) {
+  const activeLayout = renderLayout || layout;
+  if (!activeLayout) return;
 
   const currentDate = new Date(snapshot.date).getTime();
   const lifespan = computeMedianLifespan(snapshot);
 
-  // Draw territory backgrounds
-  for (const t of layout.territories) {
-    ctx.fillStyle = 'rgba(22,27,34,0.6)';
-    roundRect(ctx, t.x, t.y, t.w, t.h, 4);
-    ctx.fill();
+  const LAVA_COLOR_DARK = { r: 180, g: 30, b: 20 };
+  const LAVA_COLOR_BRIGHT = { r: 220, g: 120, b: 30 };
+  const GROWTH_COLOR = { r: 46, g: 255, b: 100 };
+
+  // First pass: draw glow behind exiting files
+  for (const file of activeLayout.files) {
+    if (!file._exiting || file.w < 1 || file.h < 1) continue;
+    const t = file._transitionT || 0;
+    const glowAlpha = 0.25 * (1 - t);
+    if (glowAlpha > 0.01) {
+      ctx.save();
+      ctx.globalAlpha = glowAlpha;
+      ctx.fillStyle = colorToCSS(LAVA_COLOR_BRIGHT);
+      ctx.fillRect(file.x - 3, file.y - 3, file.w + 6, file.h + 6);
+      ctx.restore();
+    }
   }
 
-  // Draw file blocks
-  for (const file of layout.files) {
+  // Second pass: draw all file blocks
+  for (const file of activeLayout.files) {
     if (file.w < 2 || file.h < 2) continue;
 
+    // Fill entire file rect first to avoid sub-block ocean gaps
+    const tint = FOLDER_TINTS[file.folderIdx % FOLDER_TINTS.length];
     const cols = Math.max(1, Math.floor(file.w / BLOCK_SIZE));
     const rows = Math.max(1, Math.floor(file.h / BLOCK_SIZE));
+    const blockW = file.w / cols; // elastic: blocks stretch to fill width
+    const blockH = file.h / rows; // elastic: blocks stretch to fill height
     const totalBlocks = cols * rows;
     const linesPerBlock = Math.max(1, file.lines / totalBlocks);
 
+    // For entering files, compute reveal radius from center
+    const fileCx = file.w / 2;
+    const fileCy = file.h / 2;
+    const maxRadius = Math.hypot(fileCx, fileCy);
+
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
+        const bx = file.x + c * blockW;
+        const by = file.y + r * blockH;
+
+        // For entering files: progressive reveal from center
+        if (file._entering) {
+          const t = file._transitionT || 0;
+          const bcx = (c + 0.5) * blockW;
+          const bcy = (r + 0.5) * blockH;
+          const dist = Math.hypot(bcx - fileCx, bcy - fileCy);
+          const revealRadius = maxRadius * clamp(t * 1.5, 0, 1);
+          if (dist > revealRadius) continue;
+        }
+
         const blockIndex = r * cols + c;
         const lineStart = Math.floor(blockIndex * linesPerBlock);
         const lineEnd = Math.min(Math.floor((blockIndex + 1) * linesPerBlock), file.lines);
@@ -634,25 +818,37 @@ function drawIsland(snapshot, now) {
         const age = (currentDate - newestDate) / lifespan;
         let color = ageToColor(age);
 
-        // Check for flash effects
-        for (const fx of flashEffects) {
-          if (fx.path === file.path) {
-            const elapsed = now - fx.startTime;
-            if (elapsed < FLASH_DURATION) {
-              const t = elapsed / FLASH_DURATION;
-              const flashColor = fx.type === 'add' ? FLASH_ADD_COLOR : FLASH_DEL_COLOR;
-              const intensity = 1 - t * t; // ease out
-              color = lerpColor(color, flashColor, intensity * 0.7);
-            }
-          }
+        // Apply folder tint
+        color = {
+          r: Math.max(0, Math.min(255, color.r + tint.r)),
+          g: Math.max(0, Math.min(255, color.g + tint.g)),
+          b: Math.max(0, Math.min(255, color.b + tint.b)),
+        };
+
+        // Tectonic effects
+        if (file._exiting) {
+          const t = file._transitionT || 0;
+          const bcx = (c + 0.5) * blockW;
+          const bcy = (r + 0.5) * blockH;
+          const dist = Math.hypot(bcx - fileCx, bcy - fileCy) / maxRadius;
+          const burnProgress = clamp(t * 2 - dist * 0.5, 0, 1);
+          const lavaColor = lerpColor(LAVA_COLOR_DARK, LAVA_COLOR_BRIGHT, burnProgress);
+          color = lerpColor(color, lavaColor, clamp(t * 1.8, 0, 1));
+        } else if (file._entering) {
+          const t = file._transitionT || 0;
+          const intensity = clamp(1 - t * 1.2, 0, 0.7);
+          color = lerpColor(color, GROWTH_COLOR, intensity);
         }
 
-        const bx = file.x + c * BLOCK_SIZE;
-        const by = file.y + r * BLOCK_SIZE;
         ctx.fillStyle = colorToCSS(color);
-        ctx.fillRect(bx, by, BLOCK_SIZE - 1, BLOCK_SIZE - 1);
+        ctx.fillRect(bx, by, Math.ceil(blockW), Math.ceil(blockH));
       }
     }
+
+    // Draw thin border around file
+    ctx.strokeStyle = 'rgba(25,25,66,0.3)';
+    ctx.lineWidth = FILE_BORDER;
+    ctx.strokeRect(file.x, file.y, file.w, file.h);
   }
 }
 
@@ -709,62 +905,76 @@ function tick(timestamp) {
   const dt = timestamp - lastTimestamp;
   lastTimestamp = timestamp;
 
+  // Advance transition
+  if (isTransitioning) {
+    transitionProgress += dt / TRANSITION_DURATION;
+    if (transitionProgress >= 1.0) {
+      transitionProgress = 1.0;
+      isTransitioning = false;
+      layout = nextLayout;
+      prevLayout = nextLayout;
+      transitionMap = null;
+    }
+  }
+
   if (playing && snapshots.length > 0) {
     accumulator += dt * animSpeed;
 
-    if (accumulator >= MS_PER_FRAME && currentFrame < snapshots.length - 1) {
+    if (accumulator >= MS_PER_FRAME && !isTransitioning && currentFrame < snapshots.length - 1) {
       accumulator -= MS_PER_FRAME;
       setFrame(currentFrame + 1);
     }
 
     // Auto-stop at end
-    if (currentFrame >= snapshots.length - 1) {
+    if (currentFrame >= snapshots.length - 1 && !isTransitioning) {
       playing = false;
       updatePlayButton();
     }
   }
 
+  // Build interpolated layout during transition
+  let renderLayout = layout;
+  if (isTransitioning && transitionMap) {
+    renderLayout = buildInterpolatedLayout(transitionMap, transitionProgress);
+  }
+
   // Render
   drawOcean();
-  if (snapshots.length > 0 && layout) {
-    drawIsland(snapshots[currentFrame], timestamp);
+  if (snapshots.length > 0 && renderLayout) {
+    drawIsland(snapshots[currentFrame], timestamp, renderLayout);
   }
   if (prBanner && timestamp - prBanner.startTime < 2500) {
     drawPRBanner(prBanner.pr, timestamp, prBanner.startTime);
   }
 
-  // Clean old flash effects
-  flashEffects = flashEffects.filter(fx => timestamp - fx.startTime < FLASH_DURATION);
-
   requestAnimationFrame(tick);
 }
 
-function setFrame(idx) {
+function setFrame(idx, seek) {
   const oldFrame = currentFrame;
   currentFrame = Math.max(0, Math.min(idx, snapshots.length - 1));
 
   const snap = snapshots[currentFrame];
+  const newLayout = computeTreemap(snap.files, canvas.width, canvas.height);
 
-  // Recompute layout
-  layout = computeTreemap(snap.files, canvas.width, canvas.height);
+  if (seek || !prevLayout || oldFrame === currentFrame) {
+    // Instant snap (slider seek or first frame)
+    layout = newLayout;
+    prevLayout = newLayout;
+    nextLayout = newLayout;
+    isTransitioning = false;
+    transitionMap = null;
+  } else {
+    // Animated transition
+    nextLayout = newLayout;
+    transitionMap = buildTransitionMap(prevLayout, nextLayout);
+    transitionProgress = 0;
+    isTransitioning = true;
+  }
 
-  // Trigger flash effects for changes (only when advancing forward)
-  if (currentFrame > oldFrame) {
-    const now = performance.now();
-    for (const path of snap.changed.added) {
-      flashEffects.push({ path, type: 'add', startTime: now });
-    }
-    for (const path of snap.changed.modified) {
-      flashEffects.push({ path, type: 'add', startTime: now });
-    }
-    for (const path of snap.changed.removed) {
-      flashEffects.push({ path, type: 'del', startTime: now });
-    }
-
-    // PR banner
-    if (snap.pr) {
-      prBanner = { pr: snap.pr, startTime: now };
-    }
+  // PR banner
+  if (currentFrame > oldFrame && snap.pr) {
+    prBanner = { pr: snap.pr, startTime: performance.now() };
   }
 
   // Update UI
@@ -810,7 +1020,7 @@ function setupControls() {
     const idx = Math.round(frac * (snapshots.length - 1));
     playing = false;
     updatePlayButton();
-    setFrame(idx);
+    setFrame(idx, true); // seek = true, instant snap
   });
 
   speedBtn.addEventListener('click', () => {
@@ -886,6 +1096,9 @@ function setupControls() {
     resizeCanvas();
     if (snapshots.length > 0) {
       layout = computeTreemap(snapshots[currentFrame].files, canvas.width, canvas.height);
+      prevLayout = layout;
+      isTransitioning = false;
+      transitionMap = null;
     }
   });
 }
@@ -902,6 +1115,9 @@ async function init() {
     // Build snapshots
     snapshots = buildSnapshots(repoData);
     console.log(`Built ${snapshots.length} snapshots`);
+
+    // Build stable file order from final snapshot
+    stableFileOrder = buildStableOrder(snapshots);
 
     // Setup UI
     document.getElementById('loading').style.display = 'none';
