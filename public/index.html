@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Repoviewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #191942;
+    color: #c9d1d9;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+  }
+  .container {
+    text-align: center;
+    max-width: 480px;
+    padding: 24px;
+  }
+  h1 {
+    font-size: 28px;
+    color: #e6edf3;
+    margin-bottom: 8px;
+  }
+  .subtitle {
+    font-size: 14px;
+    color: #8b949e;
+    margin-bottom: 32px;
+  }
+  .input-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  input {
+    flex: 1;
+    padding: 10px 14px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #e6edf3;
+    font-family: inherit;
+    font-size: 14px;
+    outline: none;
+  }
+  input:focus { border-color: #58a6ff; }
+  input::placeholder { color: #484f58; }
+  button {
+    padding: 10px 20px;
+    background: #238636;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button:hover { background: #2ea043; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .auth-section {
+    margin-bottom: 24px;
+  }
+  .auth-btn {
+    background: #21262d;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    padding: 10px 20px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .auth-btn:hover { background: #30363d; }
+  .user-info {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: #8b949e;
+  }
+  .user-info img {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+  }
+  .user-info a {
+    color: #8b949e;
+    font-size: 12px;
+    margin-left: 8px;
+  }
+  .error {
+    color: #f85149;
+    font-size: 13px;
+    margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Repoviewer</h1>
+  <p class="subtitle">Visualize any GitHub repo as a living island</p>
+
+  <div class="auth-section" id="auth-section"></div>
+
+  <form id="form">
+    <div class="input-row">
+      <input type="text" id="repo-input" placeholder="owner/repo" autocomplete="off" autofocus>
+      <button type="submit" id="go-btn">Visualize</button>
+    </div>
+  </form>
+  <div class="error" id="error"></div>
+</div>
+
+<script>
+async function checkAuth() {
+  const section = document.getElementById('auth-section');
+  try {
+    const res = await fetch('/api/me');
+    const data = await res.json();
+    if (data.authenticated) {
+      section.innerHTML = `
+        <span class="user-info">
+          <img src="${data.avatar}" alt="${data.login}">
+          ${data.login}
+          <a href="/auth/logout">logout</a>
+        </span>`;
+    } else {
+      section.innerHTML = `<button class="auth-btn" onclick="location.href='/auth/github'">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        Login with GitHub
+      </button>`;
+    }
+  } catch {
+    // API not available, skip auth display
+  }
+}
+
+function parseRepoInput(val) {
+  val = val.trim();
+  // Handle full GitHub URLs
+  const urlMatch = val.match(/github\.com\/([^/]+)\/([^/]+)/);
+  if (urlMatch) return { owner: urlMatch[1], repo: urlMatch[2].replace(/\.git$/, '') };
+  // Handle owner/repo format
+  const parts = val.split('/');
+  if (parts.length === 2 && parts[0] && parts[1]) return { owner: parts[0], repo: parts[1] };
+  return null;
+}
+
+document.getElementById('form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = document.getElementById('repo-input').value;
+  const parsed = parseRepoInput(input);
+  const errorEl = document.getElementById('error');
+  if (!parsed) {
+    errorEl.textContent = 'Enter a valid owner/repo or GitHub URL';
+    return;
+  }
+  errorEl.textContent = '';
+  window.location.href = `/viz/${parsed.owner}/${parsed.repo}`;
+});
+
+checkAuth();
+</script>
+</body>
+</html>
