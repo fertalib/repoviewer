@@ -89,6 +89,26 @@ app.get('/api/me', (req, res) => {
   res.json({ authenticated: true, login: req.githubUser, avatar: req.githubAvatar });
 });
 
+// --- API: list user repos ---
+app.get('/api/repos', async (req, res) => {
+  if (!req.githubToken) return res.status(401).json({ error: 'Not authenticated' });
+  try {
+    const ghRes = await fetch('https://api.github.com/user/repos?sort=pushed&per_page=50', {
+      headers: { Authorization: `Bearer ${req.githubToken}`, Accept: 'application/vnd.github.v3+json' },
+    });
+    if (!ghRes.ok) throw new Error(`GitHub API ${ghRes.status}`);
+    const repos = await ghRes.json();
+    res.json(repos.map(r => ({
+      full_name: r.full_name,
+      description: r.description,
+      updated_at: r.updated_at,
+      private: r.private,
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- API: fetch repo data ---
 app.get('/api/repo/:owner/:repo', async (req, res) => {
   const { owner, repo } = req.params;

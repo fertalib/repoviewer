@@ -96,6 +96,57 @@
     font-size: 13px;
     margin-top: 8px;
   }
+  .repos {
+    max-width: 480px;
+    margin: 0 auto 20px;
+    text-align: left;
+  }
+  .repos-label {
+    font-size: 12px;
+    color: #8b949e;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .repo-list {
+    max-height: 280px;
+    overflow-y: auto;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+  }
+  .repo-item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid #21262d;
+    cursor: pointer;
+    text-decoration: none;
+    color: #c9d1d9;
+    transition: background 0.15s;
+  }
+  .repo-item:last-child { border-bottom: none; }
+  .repo-item:hover { background: #21262d; }
+  .repo-name {
+    font-size: 14px;
+    color: #58a6ff;
+    white-space: nowrap;
+  }
+  .repo-lock {
+    font-size: 11px;
+    color: #8b949e;
+  }
+  .repo-desc {
+    font-size: 12px;
+    color: #8b949e;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .repo-list::-webkit-scrollbar { width: 6px; }
+  .repo-list::-webkit-scrollbar-track { background: transparent; }
+  .repo-list::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
 </style>
 </head>
 <body>
@@ -105,6 +156,8 @@
   <p class="subtitle">Visualize any GitHub repo as a living island</p>
 
   <div class="auth-section" id="auth-section"></div>
+
+  <div class="repos" id="repos-section" style="display:none"></div>
 
   <form id="form">
     <div class="input-row">
@@ -118,6 +171,7 @@
 <script>
 async function checkAuth() {
   const section = document.getElementById('auth-section');
+  const reposSection = document.getElementById('repos-section');
   try {
     const res = await fetch('/api/me');
     const data = await res.json();
@@ -128,6 +182,7 @@ async function checkAuth() {
           ${data.login}
           <a href="/auth/logout">logout</a>
         </span>`;
+      loadRepos(reposSection);
     } else {
       section.innerHTML = `<button class="auth-btn" onclick="location.href='/auth/github'">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
@@ -137,6 +192,28 @@ async function checkAuth() {
   } catch {
     // API not available, skip auth display
   }
+}
+
+async function loadRepos(container) {
+  try {
+    const res = await fetch('/api/repos');
+    if (!res.ok) return;
+    const repos = await res.json();
+    if (!repos.length) return;
+    container.style.display = '';
+    container.innerHTML = `
+      <div class="repos-label">Your repos</div>
+      <div class="repo-list">
+        ${repos.map(r => {
+          const [owner, name] = r.full_name.split('/');
+          return `<a class="repo-item" href="/viz/${owner}/${name}">
+            <span class="repo-name">${r.full_name}</span>
+            ${r.private ? '<span class="repo-lock">&#128274;</span>' : ''}
+            <span class="repo-desc">${r.description || ''}</span>
+          </a>`;
+        }).join('')}
+      </div>`;
+  } catch { /* ignore */ }
 }
 
 function parseRepoInput(val) {
