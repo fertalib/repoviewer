@@ -153,17 +153,6 @@
     background: #58a6ff;
     cursor: pointer;
   }
-  #speed-btn {
-    background: none;
-    border: 1px solid #30363d;
-    color: #8b949e;
-    padding: 2px 8px;
-    border-radius: 10px;
-    cursor: pointer;
-    font-size: 11px;
-    font-family: inherit;
-  }
-
   /* Legend */
   #legend { font-size: 11px; color: #8b949e; }
   .legend-item {
@@ -265,7 +254,19 @@
       <div id="controls">
         <button id="play-btn">&#9654;</button>
         <input type="range" id="timeline" min="0" max="1000" value="0">
-        <button id="speed-btn">1x</button>
+      </div>
+      <div id="time-display" style="font-size:11px;color:#8b949e;margin-top:4px;text-align:center">0:00 / 1:00</div>
+      <div class="control-row" style="margin-top:8px">
+        <select id="duration-select" class="mode-select">
+          <option value="30000">30s</option>
+          <option value="60000" selected>1 min</option>
+          <option value="120000">2 min</option>
+          <option value="300000">5 min</option>
+        </select>
+        <select id="playback-mode" class="mode-select">
+          <option value="percommit">Per commit</option>
+          <option value="temporal">Temporal</option>
+        </select>
       </div>
     </div>
 
@@ -331,40 +332,125 @@ const FOLDER_TINTS = [
   { r: 4, g: -4, b: 8 },     // blue
 ];
 
-const TRANSITION_DURATION = 2500; // ms for morph animation — slow geological movement
-
-const SPEEDS = [0.5, 1, 2, 5, 10];
-let speedIndex = 1;
-let animSpeed = SPEEDS[speedIndex];
-
 // ===================== STATE =====================
 let repoData = null;
-let snapshots = [];      // state after each commit
-let layout = null;       // current treemap layout
-let currentFrame = 0;    // index into snapshots
+let snapshots = [];
 let playing = false;
 let lastTimestamp = 0;
-let accumulator = 0;
-const MS_PER_FRAME = 2000; // base ms per commit at 1x speed
 let hoveredFile = null;
-let prevLayout = null;
-let nextLayout = null;
-let transitionProgress = 0;
-let isTransitioning = false;
-let transitionMap = null; // {continuing, entering, exiting}
-let isSeek = false; // true when user drags slider
+
+// Film timeline (continuous video paradigm)
+let filmDuration = 60000;         // default 1 minute (ms)
+let filmTime = 0;                 // current position in film (0..filmDuration)
+let playbackMode = 'percommit';   // 'percommit' or 'temporal'
+
+// Derived from snapshots at init
+let repoStartDate = 0;           // epoch ms of first commit
+let repoEndDate = 0;             // epoch ms of last commit
+let commitDates = [];             // epoch ms for each snapshot
+
+// Layout cache (avoid recomputing treemaps every render frame)
+let cachedPrevIdx = -1;
+let cachedNextIdx = -1;
+let cachedPrevLayout = null;
+let cachedNextLayout = null;
+let cachedTransitionMap = null;
+let currentFrame = 0;             // derived from filmTime, for UI/tooltip
 
 // Scaling / growth state
-let vizMode = 'growth';       // 'growth' or 'zoomout'
+let zoomOutProgress = 0;
+let vizMode = 'growth';
 let showTextLabels = false;
-let totalLinesPerFrame = [];   // total lines at each snapshot
-let finalFrameTotalLines = 1;  // total lines in the last snapshot
-let currentRenderScale = 1;    // smoothed scale for rendering
-let zoomOutProgress = 0;       // 0..1 continuous progress for dolly zoom
+let totalLinesPerFrame = [];
+let finalFrameTotalLines = 1;
+let currentRenderScale = 1;
 
 // Canvas
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
+
+// ===================== TIME MAPPING =====================
+function getTimeMapping(ft) {
+  const N = snapshots.length;
+  if (N === 0) return { prevIdx: 0, nextIdx: 0, t: 0, repoTime: 0 };
+  if (N === 1) return { prevIdx: 0, nextIdx: 0, t: 0, repoTime: commitDates[0] };
+
+  const frac = clamp(ft / filmDuration, 0, 1);
+
+  if (playbackMode === 'percommit') {
+    const progress = frac * (N - 1);
+    const prevIdx = Math.min(Math.floor(progress), N - 2);
+    const nextIdx = Math.min(prevIdx + 1, N - 1);
+    const t = progress - prevIdx;
+    const repoTime = commitDates[prevIdx] + (commitDates[nextIdx] - commitDates[prevIdx]) * t;
+    return { prevIdx, nextIdx, t, repoTime };
+  } else {
+    // Temporal mode: linear in real calendar time
+    const repoTime = repoStartDate + frac * (repoEndDate - repoStartDate);
+    // Binary search for last commit <= repoTime
+    let lo = 0, hi = N - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (commitDates[mid] <= repoTime) lo = mid;
+      else hi = mid - 1;
+    }
+    const prevIdx = lo;
+    const nextIdx = Math.min(prevIdx + 1, N - 1);
+    if (prevIdx === nextIdx) return { prevIdx, nextIdx, t: 0, repoTime };
+    const span = commitDates[nextIdx] - commitDates[prevIdx];
+    const t = span > 0 ? (repoTime - commitDates[prevIdx]) / span : 0;
+    return { prevIdx, nextIdx, t: clamp(t, 0, 1), repoTime };
+  }
+}
+
+function ensureLayoutCache(prevIdx, nextIdx) {
+  if (prevIdx === cachedPrevIdx && nextIdx === cachedNextIdx) return;
+
+  if (prevIdx !== cachedPrevIdx) {
+    cachedPrevLayout = computeTreemap(snapshots[prevIdx].files, canvas.width, canvas.height);
+    islandBoundsCache.set(prevIdx, getIslandBounds(cachedPrevLayout));
+  }
+  if (nextIdx !== cachedNextIdx) {
+    if (nextIdx === prevIdx) {
+      cachedNextLayout = cachedPrevLayout;
+    } else {
+      cachedNextLayout = computeTreemap(snapshots[nextIdx].files, canvas.width, canvas.height);
+      islandBoundsCache.set(nextIdx, getIslandBounds(cachedNextLayout));
+    }
+  }
+
+  cachedTransitionMap = (prevIdx === nextIdx)
+    ? null
+    : buildTransitionMap(cachedPrevLayout, cachedNextLayout);
+  cachedPrevIdx = prevIdx;
+  cachedNextIdx = nextIdx;
+}
+
+function seekToFilmTime(t) {
+  filmTime = clamp(t, 0, filmDuration);
+  cachedPrevIdx = -1;
+  cachedNextIdx = -1;
+}
+
+function seekToCommit(idx) {
+  const N = snapshots.length;
+  idx = clamp(idx, 0, N - 1);
+  if (playbackMode === 'percommit') {
+    filmTime = (idx / Math.max(1, N - 1)) * filmDuration;
+  } else {
+    const span = repoEndDate - repoStartDate;
+    filmTime = span > 0 ? ((commitDates[idx] - repoStartDate) / span) * filmDuration : 0;
+  }
+  cachedPrevIdx = -1;
+  cachedNextIdx = -1;
+}
+
+function formatFilmTime(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return `${min}:${sec.toString().padStart(2, '0')}`;
+}
 
 // ===================== DATA LOADING =====================
 function getRepoFromUrl() {
@@ -722,23 +808,22 @@ function buildTransitionMap(prev, next) {
 }
 
 function buildInterpolatedLayout(tMap, t) {
+  // t is already eased by the caller (easeInOutCubic from tick)
   const dimMap = new Map();
-  const gt = easeTectonic(t); // global easing for widths — all in lockstep
 
   // Compute target total width (lerp between prev and next totals)
   let prevTotalW = 0, nextTotalW = 0;
   for (const c of tMap.continuing) { prevTotalW += c.from.w; nextTotalW += c.to.w; }
   for (const e of tMap.entering) { nextTotalW += e.to.w; }
   for (const e of tMap.exiting) { prevTotalW += e.from.w; }
-  const targetTotalW = prevTotalW + (nextTotalW - prevTotalW) * gt;
+  const targetTotalW = prevTotalW + (nextTotalW - prevTotalW) * t;
 
-  // Continuing files — width in lockstep, height with delay
+  // Continuing files — width in lockstep, height with ripple delay
   for (const c of tMap.continuing) {
-    const heightT = clamp((t - c.delay) / (1 - c.delay), 0, 1);
-    const ht = easeTectonic(heightT);
+    const ht = clamp((t - c.delay * 0.3) / (1 - c.delay * 0.3), 0, 1);
     dimMap.set(c.path, {
       fileData: c.fileData,
-      w: c.from.w + (c.to.w - c.from.w) * gt,
+      w: c.from.w + (c.to.w - c.from.w) * t,
       h: c.from.h + (c.to.h - c.from.h) * ht,
       _entering: false,
       _exiting: false,
@@ -746,24 +831,25 @@ function buildInterpolatedLayout(tMap, t) {
     });
   }
 
-  // Entering files — width in lockstep, height grows with delay
+  // Entering files — grow in
   for (const e of tMap.entering) {
+    const growT = clamp((t - 0.1) / 0.7, 0, 1);
     dimMap.set(e.path, {
       fileData: e.fileData,
-      w: e.to.w * gt,
-      h: e.to.h * easeTectonic(clamp((t - 0.15) / 0.6, 0, 1)),
+      w: e.to.w * t,
+      h: e.to.h * growT,
       _entering: true,
       _exiting: false,
       _transitionT: t,
     });
   }
 
-  // Exiting files — shrink in lockstep
+  // Exiting files — shrink out
   for (const e of tMap.exiting) {
     dimMap.set(e.path, {
       fileData: e.fileData,
-      w: e.from.w * (1 - gt),
-      h: e.from.h * (1 - gt),
+      w: e.from.w * (1 - t),
+      h: e.from.h * (1 - t),
       _entering: false,
       _exiting: true,
       _transitionT: t,
@@ -942,12 +1028,14 @@ function drawOcean() {
   ctx.globalAlpha = 1;
 }
 
-function drawIsland(snapshot, now, renderLayout) {
-  const activeLayout = renderLayout || layout;
+function drawIsland(repoTime, now, renderLayout) {
+  const activeLayout = renderLayout;
   if (!activeLayout) return;
 
-  const currentDate = new Date(snapshot.date).getTime();
-  const lifespan = computeMedianLifespan(snapshot);
+  const currentDate = repoTime;
+  // Use the snapshot closest to repoTime for lifespan calculation
+  const snap = snapshots[currentFrame] || snapshots[0];
+  const lifespan = computeMedianLifespan(snap);
 
   const LAVA_COLOR_DARK = { r: 180, g: 30, b: 20 };
   const LAVA_COLOR_BRIGHT = { r: 220, g: 120, b: 30 };
@@ -1100,75 +1188,70 @@ function drawPRBanner(pr, now, startTime) {
 let prBanner = null; // {pr, startTime}
 
 function tick(timestamp) {
+  requestAnimationFrame(tick);
   if (!lastTimestamp) lastTimestamp = timestamp;
   const dt = timestamp - lastTimestamp;
   lastTimestamp = timestamp;
 
-  // Advance transition
-  if (isTransitioning) {
-    transitionProgress += dt / TRANSITION_DURATION;
-    if (transitionProgress >= 1.0) {
-      transitionProgress = 1.0;
-      isTransitioning = false;
-      layout = nextLayout;
-      prevLayout = nextLayout;
-      transitionMap = null;
-    }
+  if (snapshots.length === 0) {
+    drawOcean();
+    return;
   }
 
-  if (playing && snapshots.length > 0) {
-    accumulator += dt * animSpeed;
-
-    // Advance dolly zoom continuously (constant rate, independent of frames)
-    if (vizMode === 'zoomout') {
-      const totalPlayTime = snapshots.length * MS_PER_FRAME; // total animation duration at 1x
-      zoomOutProgress = clamp(zoomOutProgress + (dt * animSpeed) / totalPlayTime, 0, 1);
-    }
-
-    if (accumulator >= MS_PER_FRAME && !isTransitioning && currentFrame < snapshots.length - 1) {
-      accumulator -= MS_PER_FRAME;
-      setFrame(currentFrame + 1);
-    }
-
-    // Auto-stop at end
-    if (currentFrame >= snapshots.length - 1 && !isTransitioning) {
+  // Advance film time
+  if (playing) {
+    filmTime += dt;
+    if (filmTime >= filmDuration) {
+      filmTime = filmDuration;
       playing = false;
       updatePlayButton();
     }
   }
 
-  // Build interpolated layout during transition
-  let renderLayout = layout;
-  if (isTransitioning && transitionMap) {
-    renderLayout = buildInterpolatedLayout(transitionMap, transitionProgress);
+  // Map film time to snapshot indices and interpolation
+  const { prevIdx, nextIdx, t, repoTime } = getTimeMapping(filmTime);
+  ensureLayoutCache(prevIdx, nextIdx);
+
+  // Derive current frame for UI
+  const oldFrame = currentFrame;
+  currentFrame = t < 0.5 ? prevIdx : nextIdx;
+
+  // PR banner on frame change
+  if (currentFrame > oldFrame && snapshots[currentFrame].pr) {
+    prBanner = { pr: snapshots[currentFrame].pr, startTime: performance.now() };
   }
 
+  // Build interpolated layout
+  let renderLayout;
+  if (cachedTransitionMap) {
+    renderLayout = buildInterpolatedLayout(cachedTransitionMap, easeInOutCubic(t));
+  } else {
+    renderLayout = cachedPrevLayout;
+  }
+
+  // Dolly zoom progress
+  zoomOutProgress = filmTime / filmDuration;
+
   // Compute render scale
-  if (snapshots.length > 0) {
-    if (vizMode === 'zoomout') {
-      // Dolly zoom: scale from continuous zoomOutProgress (no easing — constant rate)
-      currentRenderScale = getFrameScale(currentFrame);
-    } else {
-      // Growth: scale from frame index with tectonic easing during transitions
-      let targetScale = getFrameScale(currentFrame);
-      if (isTransitioning && currentFrame > 0) {
-        const prevScale = getFrameScale(currentFrame - 1);
-        targetScale = prevScale + (targetScale - prevScale) * easeTectonic(transitionProgress);
-      }
-      currentRenderScale = targetScale;
-    }
+  if (vizMode === 'zoomout') {
+    currentRenderScale = getFrameScale(currentFrame);
+  } else {
+    // Growth: interpolate scale between prev and next frame bounds
+    const prevScale = getFrameScale(prevIdx);
+    const nextScale = getFrameScale(nextIdx);
+    currentRenderScale = prevScale + (nextScale - prevScale) * easeInOutCubic(t);
   }
 
   // Render
   drawOcean();
-  if (snapshots.length > 0 && renderLayout) {
+  if (renderLayout) {
     ctx.save();
     const cx = canvas.width / 2;
     const cy = canvas.height / 2;
     ctx.translate(cx, cy);
     ctx.scale(currentRenderScale, currentRenderScale);
     ctx.translate(-cx, -cy);
-    drawIsland(snapshots[currentFrame], timestamp, renderLayout);
+    drawIsland(repoTime, timestamp, renderLayout);
     drawTextLabels(renderLayout, currentRenderScale);
     ctx.restore();
   }
@@ -1176,52 +1259,25 @@ function tick(timestamp) {
     drawPRBanner(prBanner.pr, timestamp, prBanner.startTime);
   }
 
-  requestAnimationFrame(tick);
+  // Update sidebar
+  updateUI();
 }
 
-function setFrame(idx, seek) {
-  const oldFrame = currentFrame;
-  currentFrame = Math.max(0, Math.min(idx, snapshots.length - 1));
-
+function updateUI() {
+  if (!snapshots.length) return;
   const snap = snapshots[currentFrame];
-  const newLayout = computeTreemap(snap.files, canvas.width, canvas.height);
 
-  // Cache island bounds for this frame
-  islandBoundsCache.set(currentFrame, getIslandBounds(newLayout));
-
-  // Sync dolly zoom progress on seek
-  if (seek) {
-    zoomOutProgress = currentFrame / Math.max(1, snapshots.length - 1);
-  }
-
-  if (seek || !prevLayout || oldFrame === currentFrame) {
-    // Instant snap (slider seek or first frame)
-    layout = newLayout;
-    prevLayout = newLayout;
-    nextLayout = newLayout;
-    isTransitioning = false;
-    transitionMap = null;
-  } else {
-    // Animated transition
-    nextLayout = newLayout;
-    transitionMap = buildTransitionMap(prevLayout, nextLayout);
-    transitionProgress = 0;
-    isTransitioning = true;
-  }
-
-  // PR banner
-  if (currentFrame > oldFrame && snap.pr) {
-    prBanner = { pr: snap.pr, startTime: performance.now() };
-  }
-
-  // Update UI
-  updateUI(snap);
-}
-
-function updateUI(snap) {
+  // Timeline slider
   const slider = document.getElementById('timeline');
-  slider.value = Math.round((currentFrame / Math.max(1, snapshots.length - 1)) * 1000);
+  slider.value = Math.round((filmTime / filmDuration) * 1000);
 
+  // Time display
+  const timeDisplay = document.getElementById('time-display');
+  if (timeDisplay) {
+    timeDisplay.textContent = `${formatFilmTime(filmTime)} / ${formatFilmTime(filmDuration)}`;
+  }
+
+  // Commit info
   document.getElementById('commit-msg').textContent = snap.message;
   document.getElementById('date-display').textContent = new Date(snap.date).toLocaleDateString('en-US', {
     year: 'numeric', month: 'short', day: 'numeric',
@@ -1230,7 +1286,6 @@ function updateUI(snap) {
   const fileCount = Object.keys(snap.files).length;
   const totalLines = Object.values(snap.files).reduce((s, f) => s + f.lines, 0);
 
-  // Update sidebar info
   document.getElementById('info-files').textContent = fileCount;
   document.getElementById('info-lines').textContent = totalLines.toLocaleString();
   document.getElementById('info-commits').textContent = snapshots.length;
@@ -1245,13 +1300,11 @@ function updatePlayButton() {
 function setupControls() {
   const playBtn = document.getElementById('play-btn');
   const slider = document.getElementById('timeline');
-  const speedBtn = document.getElementById('speed-btn');
 
   playBtn.addEventListener('click', () => {
-    if (currentFrame >= snapshots.length - 1 && !playing) {
+    if (filmTime >= filmDuration && !playing) {
       // Restart from beginning
-      zoomOutProgress = 0;
-      setFrame(0);
+      seekToFilmTime(0);
     }
     playing = !playing;
     updatePlayButton();
@@ -1259,16 +1312,27 @@ function setupControls() {
 
   slider.addEventListener('input', () => {
     const frac = parseInt(slider.value) / 1000;
-    const idx = Math.round(frac * (snapshots.length - 1));
     playing = false;
     updatePlayButton();
-    setFrame(idx, true); // seek = true, instant snap
+    seekToFilmTime(frac * filmDuration);
   });
 
-  speedBtn.addEventListener('click', () => {
-    speedIndex = (speedIndex + 1) % SPEEDS.length;
-    animSpeed = SPEEDS[speedIndex];
-    speedBtn.textContent = `${animSpeed}x`;
+  // Duration selector
+  document.getElementById('duration-select').addEventListener('change', (e) => {
+    const oldFrac = filmDuration > 0 ? filmTime / filmDuration : 0;
+    filmDuration = parseInt(e.target.value);
+    filmTime = oldFrac * filmDuration; // preserve position
+    cachedPrevIdx = -1; // invalidate cache
+    cachedNextIdx = -1;
+  });
+
+  // Playback mode selector
+  document.getElementById('playback-mode').addEventListener('change', (e) => {
+    const oldFrac = filmDuration > 0 ? filmTime / filmDuration : 0;
+    playbackMode = e.target.value;
+    filmTime = oldFrac * filmDuration; // preserve position
+    cachedPrevIdx = -1;
+    cachedNextIdx = -1;
   });
 
   // Keyboard
@@ -1279,18 +1343,27 @@ function setupControls() {
     } else if (e.code === 'ArrowRight') {
       playing = false;
       updatePlayButton();
-      setFrame(currentFrame + 1);
+      if (playbackMode === 'percommit') {
+        seekToCommit(currentFrame + 1);
+      } else {
+        seekToFilmTime(filmTime + 1000); // +1s
+      }
     } else if (e.code === 'ArrowLeft') {
       playing = false;
       updatePlayButton();
-      setFrame(currentFrame - 1);
+      if (playbackMode === 'percommit') {
+        seekToCommit(currentFrame - 1);
+      } else {
+        seekToFilmTime(filmTime - 1000); // -1s
+      }
     }
   });
 
   // Tooltip on hover
   canvas.addEventListener('mousemove', (e) => {
     const tooltip = document.getElementById('tooltip');
-    if (!layout) { tooltip.style.display = 'none'; return; }
+    const activeLayout = cachedPrevLayout;
+    if (!activeLayout) { tooltip.style.display = 'none'; return; }
 
     const rect = canvas.getBoundingClientRect();
     const canvasX = e.clientX - rect.left;
@@ -1304,7 +1377,7 @@ function setupControls() {
     const my = (canvasY - cy) / scale + cy;
 
     let found = null;
-    for (const file of layout.files) {
+    for (const file of activeLayout.files) {
       if (mx >= file.x && mx <= file.x + file.w && my >= file.y && my <= file.y + file.h) {
         found = file;
         break;
@@ -1313,8 +1386,6 @@ function setupControls() {
 
     if (found) {
       hoveredFile = found.path;
-      const snap = snapshots[currentFrame];
-      const fileData = snap.files[found.path];
       tooltip.innerHTML = `
         <div class="filepath">${found.path}</div>
         <div class="detail">${found.lines} lines · ${found.folder}/</div>
@@ -1323,7 +1394,6 @@ function setupControls() {
       tooltip.style.left = (e.clientX + 12) + 'px';
       tooltip.style.top = (e.clientY - 8) + 'px';
 
-      // Keep tooltip in viewport
       const tr = tooltip.getBoundingClientRect();
       if (tr.right > window.innerWidth) {
         tooltip.style.left = (e.clientX - tr.width - 12) + 'px';
@@ -1346,23 +1416,19 @@ function setupControls() {
   const resizeObserver = new ResizeObserver(() => {
     resizeCanvas();
     if (snapshots.length > 0) {
-      // Recompute bounds cache for key frames
       islandBoundsCache.clear();
+      cachedPrevIdx = -1;
+      cachedNextIdx = -1;
+      // Precompute bounds for first and last frames
       const l0 = computeTreemap(snapshots[0].files, canvas.width, canvas.height);
       islandBoundsCache.set(0, getIslandBounds(l0));
       const lF = computeTreemap(snapshots[snapshots.length - 1].files, canvas.width, canvas.height);
       islandBoundsCache.set(snapshots.length - 1, getIslandBounds(lF));
-
-      layout = computeTreemap(snapshots[currentFrame].files, canvas.width, canvas.height);
-      islandBoundsCache.set(currentFrame, getIslandBounds(layout));
-      prevLayout = layout;
-      isTransitioning = false;
-      transitionMap = null;
     }
   });
   resizeObserver.observe(document.getElementById('canvas-wrapper'));
 
-  // Sidebar controls
+  // Display controls
   document.getElementById('viz-mode').addEventListener('change', (e) => {
     vizMode = e.target.value;
   });
@@ -1386,6 +1452,11 @@ async function init() {
     // Build stable file order from final snapshot
     stableFileOrder = buildStableOrder(snapshots);
 
+    // Compute commit dates for time mapping
+    commitDates = snapshots.map(s => new Date(s.date).getTime());
+    repoStartDate = commitDates[0] || 0;
+    repoEndDate = commitDates[commitDates.length - 1] || 0;
+
     // Precompute total lines per frame for scaling
     totalLinesPerFrame = snapshots.map(snap =>
       Object.values(snap.files).reduce((s, f) => s + f.lines, 0)
@@ -1407,8 +1478,8 @@ async function init() {
     const layoutF = computeTreemap(snapshots[snapshots.length - 1].files, canvas.width, canvas.height);
     islandBoundsCache.set(snapshots.length - 1, getIslandBounds(layoutF));
 
-    // Start at first frame
-    setFrame(0);
+    // Start at beginning
+    seekToFilmTime(0);
 
   } catch (err) {
     document.getElementById('loading').innerHTML =
