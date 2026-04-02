@@ -7,48 +7,134 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: #191942;
+    background: #0d1117;
     color: #c9d1d9;
     font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
     overflow: hidden;
     user-select: none;
   }
-  canvas { display: block; }
 
-  #ui {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    padding: 16px 24px;
-    background: linear-gradient(transparent, rgba(25,25,66,0.95) 30%);
-    pointer-events: none;
-  }
-  #ui > * { pointer-events: auto; }
-
-  #controls {
+  #app {
     display: flex;
-    align-items: center;
-    gap: 12px;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  /* === SIDEBAR === */
+  #sidebar {
+    width: 260px;
+    min-width: 260px;
+    background: #0d1117;
+    border-right: 1px solid #21262d;
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    gap: 16px;
+    overflow-y: auto;
+  }
+  #sidebar-header { display: flex; align-items: center; gap: 8px; }
+  #sidebar-header a {
+    color: #8b949e;
+    text-decoration: none;
+    font-size: 18px;
+    line-height: 1;
+  }
+  #sidebar-header a:hover { color: #58a6ff; }
+  #sidebar-header h1 {
+    font-size: 15px;
+    color: #e6edf3;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sidebar-section {
+    border-top: 1px solid #21262d;
+    padding-top: 12px;
+  }
+  .sidebar-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #484f58;
     margin-bottom: 8px;
   }
 
+  /* Info box */
+  .info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .info-item { font-size: 12px; }
+  .info-value { color: #e6edf3; font-size: 14px; font-weight: 600; }
+  .info-label { color: #484f58; font-size: 10px; }
+
+  /* Commit info */
+  #commit-msg {
+    font-size: 12px;
+    color: #c9d1d9;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #commit-meta {
+    font-size: 11px;
+    color: #484f58;
+    margin-top: 4px;
+  }
+  #commit-meta span { color: #58a6ff; }
+
+  /* Controls */
+  .control-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .control-row label {
+    font-size: 11px;
+    color: #8b949e;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .control-row select, .control-row input[type="checkbox"] {
+    accent-color: #58a6ff;
+  }
+  .mode-select {
+    background: #161b22;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  /* Playback */
+  #controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
   #play-btn {
     background: none;
     border: 1px solid #30363d;
     color: #c9d1d9;
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: border-color 0.2s;
   }
   #play-btn:hover { border-color: #58a6ff; }
-
   #timeline {
     flex: 1;
     -webkit-appearance: none;
@@ -61,43 +147,47 @@
   }
   #timeline::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
     background: #58a6ff;
     cursor: pointer;
   }
-
   #speed-btn {
     background: none;
     border: 1px solid #30363d;
     color: #8b949e;
-    padding: 4px 10px;
-    border-radius: 12px;
+    padding: 2px 8px;
+    border-radius: 10px;
     cursor: pointer;
-    font-size: 12px;
+    font-size: 11px;
     font-family: inherit;
   }
 
-  #info-bar {
+  /* Legend */
+  #legend { font-size: 11px; color: #8b949e; }
+  .legend-item {
     display: flex;
-    justify-content: space-between;
-    font-size: 12px;
-    color: #8b949e;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 3px;
   }
-  #commit-msg { color: #c9d1d9; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #date-display { color: #58a6ff; }
-
-  #header {
-    position: fixed;
-    top: 20px;
-    left: 24px;
-    font-size: 14px;
-    color: #8b949e;
+  .legend-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
   }
-  #header h1 { font-size: 20px; color: #c9d1d9; font-weight: 600; margin-bottom: 4px; }
-  #header .stats { font-size: 12px; }
 
+  /* === CANVAS AREA === */
+  #canvas-wrapper {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: #191942;
+  }
+  canvas { display: block; }
+
+  /* === TOOLTIP === */
   #tooltip {
     position: fixed;
     display: none;
@@ -114,6 +204,7 @@
   #tooltip .filepath { color: #58a6ff; font-weight: 600; }
   #tooltip .detail { color: #8b949e; }
 
+  /* === LOADING === */
   #loading {
     position: fixed;
     inset: 0;
@@ -124,6 +215,8 @@
     gap: 12px;
     font-size: 16px;
     color: #8b949e;
+    z-index: 200;
+    background: #0d1117;
   }
   #loading .spinner {
     width: 24px;
@@ -134,25 +227,6 @@
     animation: spin 0.8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-
-  #legend {
-    position: fixed;
-    top: 20px;
-    right: 24px;
-    font-size: 11px;
-    color: #8b949e;
-  }
-  .legend-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 4px;
-  }
-  .legend-swatch {
-    width: 10px;
-    height: 10px;
-    border-radius: 2px;
-  }
 </style>
 </head>
 <body>
@@ -162,31 +236,68 @@
   <div>Loading repository data...</div>
 </div>
 
-<canvas id="canvas"></canvas>
+<div id="app" style="display:none">
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <a href="/" title="Back to home">&larr;</a>
+      <h1 id="repo-name"></h1>
+    </div>
 
-<div id="header" style="display:none">
-  <h1 id="repo-name"></h1>
-  <div class="stats" id="repo-stats"></div>
-</div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Info</div>
+      <div class="info-grid">
+        <div class="info-item"><div class="info-value" id="info-files">-</div><div class="info-label">files</div></div>
+        <div class="info-item"><div class="info-value" id="info-lines">-</div><div class="info-label">lines</div></div>
+        <div class="info-item"><div class="info-value" id="info-commits">-</div><div class="info-label">commits</div></div>
+        <div class="info-item"><div class="info-value" id="info-frame">-</div><div class="info-label">current</div></div>
+      </div>
+    </div>
 
-<div id="legend" style="display:none">
-  <div class="legend-item"><div class="legend-swatch" style="background:#2ecc71"></div> Fresh</div>
-  <div class="legend-item"><div class="legend-swatch" style="background:#3d6b3f"></div> Mature</div>
-  <div class="legend-item"><div class="legend-swatch" style="background:#6b5a3e"></div> Aging</div>
-  <div class="legend-item"><div class="legend-swatch" style="background:#8c7850"></div> Weathered</div>
-  <div class="legend-item"><div class="legend-swatch" style="background:#b2a480"></div> Legacy</div>
-  <div class="legend-item"><div class="legend-swatch" style="background:#afafa8"></div> Ancient</div>
-</div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Commit</div>
+      <div id="commit-msg">-</div>
+      <div id="commit-meta"><span id="date-display">-</span></div>
+    </div>
 
-<div id="ui" style="display:none">
-  <div id="controls">
-    <button id="play-btn">&#9654;</button>
-    <input type="range" id="timeline" min="0" max="1000" value="0">
-    <button id="speed-btn">1x</button>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Playback</div>
+      <div id="controls">
+        <button id="play-btn">&#9654;</button>
+        <input type="range" id="timeline" min="0" max="1000" value="0">
+        <button id="speed-btn">1x</button>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Display</div>
+      <div class="control-row">
+        <select id="viz-mode" class="mode-select">
+          <option value="growth">Growth (shows scale)</option>
+          <option value="zoomout">Fit to canvas</option>
+        </select>
+      </div>
+      <div class="control-row" style="margin-top:8px">
+        <label><input type="checkbox" id="text-toggle"> Show file names</label>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Legend</div>
+      <div id="legend">
+        <div class="legend-item"><div class="legend-swatch" style="background:#2ecc71"></div> Fresh</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#3d6b3f"></div> Mature</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#6b5a3e"></div> Aging</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#8c7850"></div> Weathered</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#b2a480"></div> Legacy</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#afafa8"></div> Ancient</div>
+      </div>
+    </div>
   </div>
-  <div id="info-bar">
-    <span id="commit-msg"></span>
-    <span id="date-display"></span>
+
+  <!-- Canvas viewer -->
+  <div id="canvas-wrapper">
+    <canvas id="canvas"></canvas>
   </div>
 </div>
 
@@ -242,6 +353,14 @@ let transitionProgress = 0;
 let isTransitioning = false;
 let transitionMap = null; // {continuing, entering, exiting}
 let isSeek = false; // true when user drags slider
+
+// Scaling / growth state
+let vizMode = 'growth';       // 'growth' or 'zoomout'
+let showTextLabels = false;
+let totalLinesPerFrame = [];   // total lines at each snapshot
+let finalFrameTotalLines = 1;  // total lines in the last snapshot
+let currentRenderScale = 1;    // smoothed scale for rendering
+let zoomOutProgress = 0;       // 0..1 continuous progress for dolly zoom
 
 // Canvas
 const canvas = document.getElementById('canvas');
@@ -467,17 +586,21 @@ function computeTreemap(filesObj, canvasW, canvasH) {
   const totalValue = orderedFiles.reduce((s, f) => s + f.value, 0);
   const maxValue = Math.max(...orderedFiles.map(f => f.value));
 
-  const H_max = canvasH * 0.6;
-  const W_island = canvasW * 0.7;
+  // --- Fixed block sizes: each line = 1 block ---
+  // File dimensions in blocks, then multiply by BLOCK_SIZE
+  // Width: proportional to file's share of total, with a target aspect ratio
+  // Height: mountain shape — proportional to sqrt(lines), in block units
+  const maxBlocks = maxValue;
+  const maxH_blocks = Math.ceil(Math.sqrt(maxBlocks) * 1.5); // tallest file in blocks
 
-  // Compute initial dimensions
   for (const f of orderedFiles) {
-    f.h = H_max * Math.pow(f.value / maxValue, MOUNTAIN_ALPHA);
-    f.w = Math.max(BLOCK_SIZE, (f.value / totalValue) * W_island);
+    const hBlocks = Math.max(1, Math.round(maxH_blocks * Math.pow(f.value / maxValue, MOUNTAIN_ALPHA)));
+    const wBlocks = Math.max(1, Math.ceil(f.value / hBlocks));
+    f.h = hBlocks * BLOCK_SIZE;
+    f.w = wBlocks * BLOCK_SIZE;
   }
 
   // --- Smooth heights: adjacent files can't differ by more than MAX_ADJ_HEIGHT_DIFF px ---
-  // Multiple passes, alternating direction for even propagation
   for (let pass = 0; pass < 6; pass++) {
     const forward = pass % 2 === 0;
     const start = forward ? 0 : orderedFiles.length - 2;
@@ -489,22 +612,21 @@ function computeTreemap(filesObj, canvasW, canvasH) {
       if (diff > MAX_ADJ_HEIGHT_DIFF) {
         const shorter = a.h < b.h ? a : b;
         const taller = a.h < b.h ? b : a;
-        const areaOld = shorter.w * shorter.h;
+        const oldH = shorter.h;
         shorter.h = taller.h - MAX_ADJ_HEIGHT_DIFF;
-        shorter.w = Math.max(BLOCK_SIZE, areaOld / shorter.h);
+        // Snap to block grid
+        shorter.h = Math.max(BLOCK_SIZE, Math.round(shorter.h / BLOCK_SIZE) * BLOCK_SIZE);
+        // Recompute width to preserve line count
+        const hBlocks = shorter.h / BLOCK_SIZE;
+        const wBlocks = Math.max(1, Math.ceil(shorter.value / hBlocks));
+        shorter.w = wBlocks * BLOCK_SIZE;
       }
     }
   }
 
-  // --- Snap widths to BLOCK_SIZE multiples (eliminates sub-pixel gaps) ---
-  for (const f of orderedFiles) {
-    f.w = Math.max(BLOCK_SIZE, Math.round(f.w / BLOCK_SIZE) * BLOCK_SIZE);
-    f.h = Math.max(BLOCK_SIZE, Math.round(f.h / BLOCK_SIZE) * BLOCK_SIZE);
-  }
-
   // --- Place left to right, vertically centered ---
   const totalW = orderedFiles.reduce((s, f) => s + f.w, 0);
-  let curX = (canvasW - totalW) / 2; // center the whole island
+  let curX = (canvasW - totalW) / 2;
   const midY = canvasH * 0.5;
 
   const placed = [];
@@ -719,8 +841,71 @@ function lerpColor(a, b, t) {
 
 // ===================== RENDERING =====================
 function resizeCanvas() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  const wrapper = document.getElementById('canvas-wrapper');
+  canvas.width = wrapper.clientWidth;
+  canvas.height = wrapper.clientHeight;
+}
+
+// ===================== SCALING =====================
+// With fixed BLOCK_SIZE, the island's natural pixel size varies per frame.
+// We need to scale it to fit the canvas viewport.
+
+// Cache island bounds per frame (set after computeTreemap)
+let islandBoundsCache = new Map(); // frameIdx -> { w, h }
+
+function getIslandBounds(layout) {
+  if (!layout || !layout.files.length) return { w: 100, h: 100 };
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const f of layout.files) {
+    minX = Math.min(minX, f.x);
+    maxX = Math.max(maxX, f.x + f.w);
+    minY = Math.min(minY, f.y);
+    maxY = Math.max(maxY, f.y + f.h);
+  }
+  return { w: maxX - minX, h: maxY - minY };
+}
+
+function getFitScale(islandW, islandH) {
+  // Scale to fit island in 80% of canvas
+  const targetW = canvas.width * 0.8;
+  const targetH = canvas.height * 0.8;
+  return Math.min(targetW / islandW, targetH / islandH, 3.0); // cap at 3x
+}
+
+function getFrameScale(frameIdx) {
+  if (vizMode === 'growth') {
+    // Growth: final frame fills canvas. Earlier frames use same scale → appear smaller.
+    // Compute scale from final frame's island bounds.
+    const finalBounds = islandBoundsCache.get(snapshots.length - 1);
+    if (!finalBounds) return 1.0;
+    return getFitScale(finalBounds.w, finalBounds.h);
+  } else {
+    // Dolly zoom: camera pulls back at constant rate over continuous time.
+    // zoomOutProgress (0..1) advances smoothly during playback, not per frame.
+    const bounds0 = islandBoundsCache.get(0);
+    const boundsF = islandBoundsCache.get(snapshots.length - 1);
+    if (!bounds0 || !boundsF) return 1.0;
+    const scale0 = getFitScale(bounds0.w, bounds0.h);
+    const scaleF = getFitScale(boundsF.w, boundsF.h);
+    return scale0 + (scaleF - scale0) * zoomOutProgress;
+  }
+}
+
+function drawTextLabels(activeLayout, scale) {
+  if (!showTextLabels) return;
+  ctx.save();
+  for (const file of activeLayout.files) {
+    const effectiveW = file.w * scale;
+    if (effectiveW < 40) continue;
+    const filename = file.path.split('/').pop();
+    const fontSize = Math.max(8, Math.min(12, effectiveW / filename.length * 1.2));
+    ctx.font = `${fontSize / scale}px 'JetBrains Mono', monospace`;
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(filename, file.x + file.w / 2, file.y + file.h / 2, file.w * 0.9);
+  }
+  ctx.restore();
 }
 
 function computeMedianLifespan(snapshot) {
@@ -788,10 +973,10 @@ function drawIsland(snapshot, now, renderLayout) {
 
     // Fill entire file rect first to avoid sub-block ocean gaps
     const tint = FOLDER_TINTS[file.folderIdx % FOLDER_TINTS.length];
-    const cols = Math.max(1, Math.floor(file.w / BLOCK_SIZE));
-    const rows = Math.max(1, Math.floor(file.h / BLOCK_SIZE));
-    const blockW = file.w / cols; // elastic: blocks stretch to fill width
-    const blockH = file.h / rows; // elastic: blocks stretch to fill height
+    const cols = Math.max(1, Math.round(file.w / BLOCK_SIZE));
+    const rows = Math.max(1, Math.round(file.h / BLOCK_SIZE));
+    const blockW = BLOCK_SIZE; // fixed block size
+    const blockH = BLOCK_SIZE; // fixed block size
     const totalBlocks = cols * rows;
     const linesPerBlock = Math.max(1, file.lines / totalBlocks);
 
@@ -934,6 +1119,12 @@ function tick(timestamp) {
   if (playing && snapshots.length > 0) {
     accumulator += dt * animSpeed;
 
+    // Advance dolly zoom continuously (constant rate, independent of frames)
+    if (vizMode === 'zoomout') {
+      const totalPlayTime = snapshots.length * MS_PER_FRAME; // total animation duration at 1x
+      zoomOutProgress = clamp(zoomOutProgress + (dt * animSpeed) / totalPlayTime, 0, 1);
+    }
+
     if (accumulator >= MS_PER_FRAME && !isTransitioning && currentFrame < snapshots.length - 1) {
       accumulator -= MS_PER_FRAME;
       setFrame(currentFrame + 1);
@@ -952,10 +1143,34 @@ function tick(timestamp) {
     renderLayout = buildInterpolatedLayout(transitionMap, transitionProgress);
   }
 
+  // Compute render scale
+  if (snapshots.length > 0) {
+    if (vizMode === 'zoomout') {
+      // Dolly zoom: scale from continuous zoomOutProgress (no easing — constant rate)
+      currentRenderScale = getFrameScale(currentFrame);
+    } else {
+      // Growth: scale from frame index with tectonic easing during transitions
+      let targetScale = getFrameScale(currentFrame);
+      if (isTransitioning && currentFrame > 0) {
+        const prevScale = getFrameScale(currentFrame - 1);
+        targetScale = prevScale + (targetScale - prevScale) * easeTectonic(transitionProgress);
+      }
+      currentRenderScale = targetScale;
+    }
+  }
+
   // Render
   drawOcean();
   if (snapshots.length > 0 && renderLayout) {
+    ctx.save();
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+    ctx.translate(cx, cy);
+    ctx.scale(currentRenderScale, currentRenderScale);
+    ctx.translate(-cx, -cy);
     drawIsland(snapshots[currentFrame], timestamp, renderLayout);
+    drawTextLabels(renderLayout, currentRenderScale);
+    ctx.restore();
   }
   if (prBanner && timestamp - prBanner.startTime < 2500) {
     drawPRBanner(prBanner.pr, timestamp, prBanner.startTime);
@@ -970,6 +1185,14 @@ function setFrame(idx, seek) {
 
   const snap = snapshots[currentFrame];
   const newLayout = computeTreemap(snap.files, canvas.width, canvas.height);
+
+  // Cache island bounds for this frame
+  islandBoundsCache.set(currentFrame, getIslandBounds(newLayout));
+
+  // Sync dolly zoom progress on seek
+  if (seek) {
+    zoomOutProgress = currentFrame / Math.max(1, snapshots.length - 1);
+  }
 
   if (seek || !prevLayout || oldFrame === currentFrame) {
     // Instant snap (slider seek or first frame)
@@ -1006,8 +1229,12 @@ function updateUI(snap) {
 
   const fileCount = Object.keys(snap.files).length;
   const totalLines = Object.values(snap.files).reduce((s, f) => s + f.lines, 0);
-  document.getElementById('repo-stats').textContent =
-    `${fileCount} files · ${totalLines.toLocaleString()} lines · commit ${currentFrame + 1}/${snapshots.length}`;
+
+  // Update sidebar info
+  document.getElementById('info-files').textContent = fileCount;
+  document.getElementById('info-lines').textContent = totalLines.toLocaleString();
+  document.getElementById('info-commits').textContent = snapshots.length;
+  document.getElementById('info-frame').textContent = `${currentFrame + 1}/${snapshots.length}`;
 }
 
 function updatePlayButton() {
@@ -1023,6 +1250,7 @@ function setupControls() {
   playBtn.addEventListener('click', () => {
     if (currentFrame >= snapshots.length - 1 && !playing) {
       // Restart from beginning
+      zoomOutProgress = 0;
       setFrame(0);
     }
     playing = !playing;
@@ -1064,9 +1292,18 @@ function setupControls() {
     const tooltip = document.getElementById('tooltip');
     if (!layout) { tooltip.style.display = 'none'; return; }
 
-    const mx = e.clientX, my = e.clientY;
-    let found = null;
+    const rect = canvas.getBoundingClientRect();
+    const canvasX = e.clientX - rect.left;
+    const canvasY = e.clientY - rect.top;
 
+    // Invert scale transform to get layout coordinates
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+    const scale = currentRenderScale;
+    const mx = (canvasX - cx) / scale + cx;
+    const my = (canvasY - cy) / scale + cy;
+
+    let found = null;
     for (const file of layout.files) {
       if (mx >= file.x && mx <= file.x + file.w && my >= file.y && my <= file.y + file.h) {
         found = file;
@@ -1083,16 +1320,16 @@ function setupControls() {
         <div class="detail">${found.lines} lines · ${found.folder}/</div>
       `;
       tooltip.style.display = 'block';
-      tooltip.style.left = (mx + 12) + 'px';
-      tooltip.style.top = (my - 8) + 'px';
+      tooltip.style.left = (e.clientX + 12) + 'px';
+      tooltip.style.top = (e.clientY - 8) + 'px';
 
       // Keep tooltip in viewport
       const tr = tooltip.getBoundingClientRect();
       if (tr.right > window.innerWidth) {
-        tooltip.style.left = (mx - tr.width - 12) + 'px';
+        tooltip.style.left = (e.clientX - tr.width - 12) + 'px';
       }
       if (tr.bottom > window.innerHeight) {
-        tooltip.style.top = (my - tr.height - 8) + 'px';
+        tooltip.style.top = (e.clientY - tr.height - 8) + 'px';
       }
     } else {
       hoveredFile = null;
@@ -1106,20 +1343,36 @@ function setupControls() {
   });
 
   // Resize
-  window.addEventListener('resize', () => {
+  const resizeObserver = new ResizeObserver(() => {
     resizeCanvas();
     if (snapshots.length > 0) {
+      // Recompute bounds cache for key frames
+      islandBoundsCache.clear();
+      const l0 = computeTreemap(snapshots[0].files, canvas.width, canvas.height);
+      islandBoundsCache.set(0, getIslandBounds(l0));
+      const lF = computeTreemap(snapshots[snapshots.length - 1].files, canvas.width, canvas.height);
+      islandBoundsCache.set(snapshots.length - 1, getIslandBounds(lF));
+
       layout = computeTreemap(snapshots[currentFrame].files, canvas.width, canvas.height);
+      islandBoundsCache.set(currentFrame, getIslandBounds(layout));
       prevLayout = layout;
       isTransitioning = false;
       transitionMap = null;
     }
   });
+  resizeObserver.observe(document.getElementById('canvas-wrapper'));
+
+  // Sidebar controls
+  document.getElementById('viz-mode').addEventListener('change', (e) => {
+    vizMode = e.target.value;
+  });
+  document.getElementById('text-toggle').addEventListener('change', (e) => {
+    showTextLabels = e.target.checked;
+  });
 }
 
 // ===================== INIT =====================
 async function init() {
-  resizeCanvas();
   setupControls();
   requestAnimationFrame(tick);
 
@@ -1133,13 +1386,26 @@ async function init() {
     // Build stable file order from final snapshot
     stableFileOrder = buildStableOrder(snapshots);
 
+    // Precompute total lines per frame for scaling
+    totalLinesPerFrame = snapshots.map(snap =>
+      Object.values(snap.files).reduce((s, f) => s + f.lines, 0)
+    );
+    finalFrameTotalLines = totalLinesPerFrame[totalLinesPerFrame.length - 1] || 1;
+
     // Setup UI
     document.getElementById('loading').style.display = 'none';
-    document.getElementById('ui').style.display = '';
-    document.getElementById('header').style.display = '';
-    document.getElementById('legend').style.display = '';
+    document.getElementById('app').style.display = '';
     document.getElementById('repo-name').textContent =
       `${repoData.repo.owner}/${repoData.repo.name}`;
+
+    // Size canvas after app is visible (wrapper needs layout)
+    resizeCanvas();
+
+    // Precompute island bounds for frame 0 and final frame (needed for zoom scaling)
+    const layout0 = computeTreemap(snapshots[0].files, canvas.width, canvas.height);
+    islandBoundsCache.set(0, getIslandBounds(layout0));
+    const layoutF = computeTreemap(snapshots[snapshots.length - 1].files, canvas.width, canvas.height);
+    islandBoundsCache.set(snapshots.length - 1, getIslandBounds(layoutF));
 
     // Start at first frame
     setFrame(0);
