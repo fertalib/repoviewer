@@ -39,7 +39,7 @@ app.get('/auth/github', (_req, res) => {
   if (!GITHUB_CLIENT_ID) return res.status(500).send('GITHUB_CLIENT_ID not configured');
   const params = new URLSearchParams({
     client_id: GITHUB_CLIENT_ID,
-    scope: 'repo',
+    scope: 'repo read:org',
     redirect_uri: `${process.env.BASE_URL || 'http://localhost:' + PORT}/auth/callback`,
   });
   res.redirect(`https://github.com/login/oauth/authorize?${params}`);
