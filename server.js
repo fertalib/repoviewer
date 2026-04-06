@@ -96,12 +96,13 @@ app.get('/api/repos', async (req, res) => {
   try {
     // Fetch user repos and orgs in parallel
     const [userReposRes, orgsRes] = await Promise.all([
-      fetch('https://api.github.com/user/repos?sort=pushed&per_page=50&affiliation=owner,collaborator', { headers }),
+      fetch('https://api.github.com/user/repos?sort=pushed&per_page=100&affiliation=owner,collaborator,organization_member', { headers }),
       fetch('https://api.github.com/user/orgs?per_page=100', { headers }),
     ]);
     if (!userReposRes.ok) throw new Error(`GitHub API ${userReposRes.status}`);
     const userRepos = await userReposRes.json();
     const orgs = orgsRes.ok ? await orgsRes.json() : [];
+    console.log(`[repos] User repos: ${userRepos.length}, Orgs: ${orgs.length} (${orgs.map(o => o.login).join(', ')})`);
 
     // Fetch repos for each org in parallel
     const orgRepoResults = await Promise.all(
@@ -113,8 +114,11 @@ app.get('/api/repos', async (req, res) => {
       })
     );
 
+    const orgReposFlat = orgRepoResults.flat();
+    console.log(`[repos] Org repos fetched: ${orgReposFlat.length}`);
+
     // Merge and dedupe
-    const allRepos = [...userRepos, ...orgRepoResults.flat()];
+    const allRepos = [...userRepos, ...orgReposFlat];
     const seen = new Set();
     const deduped = allRepos.filter(r => {
       if (seen.has(r.full_name)) return false;
