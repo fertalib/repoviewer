@@ -39,7 +39,7 @@ app.get('/auth/github', (_req, res) => {
   if (!GITHUB_CLIENT_ID) return res.status(500).send('GITHUB_CLIENT_ID not configured');
   const params = new URLSearchParams({
     client_id: GITHUB_CLIENT_ID,
-    scope: 'repo',
+    scope: 'repo read:org',
     redirect_uri: `${process.env.BASE_URL || 'http://localhost:' + PORT}/auth/callback`,
   });
   res.redirect(`https://github.com/login/oauth/authorize?${params}`);
@@ -89,20 +89,52 @@ app.get('/api/me', (req, res) => {
   res.json({ authenticated: true, login: req.githubUser, avatar: req.githubAvatar });
 });
 
-// --- API: list user repos ---
+// --- API: list user repos (including org repos) ---
 app.get('/api/repos', async (req, res) => {
   if (!req.githubToken) return res.status(401).json({ error: 'Not authenticated' });
+  const headers = { Authorization: `Bearer ${req.githubToken}`, Accept: 'application/vnd.github.v3+json' };
   try {
-    const ghRes = await fetch('https://api.github.com/user/repos?sort=pushed&per_page=50', {
-      headers: { Authorization: `Bearer ${req.githubToken}`, Accept: 'application/vnd.github.v3+json' },
+    // Fetch user repos and orgs in parallel
+    const [userReposRes, orgsRes] = await Promise.all([
+      fetch('https://api.github.com/user/repos?sort=pushed&per_page=100&affiliation=owner,collaborator,organization_member', { headers }),
+      fetch('https://api.github.com/user/orgs?per_page=100', { headers }),
+    ]);
+    if (!userReposRes.ok) throw new Error(`GitHub API ${userReposRes.status}`);
+    const userRepos = await userReposRes.json();
+    const orgs = orgsRes.ok ? await orgsRes.json() : [];
+    console.log(`[repos] User repos: ${userRepos.length}, Orgs: ${orgs.length} (${orgs.map(o => o.login).join(', ')})`);
+
+    // Fetch repos for each org in parallel
+    const orgRepoResults = await Promise.all(
+      orgs.map(async (org) => {
+        try {
+          const r = await fetch(`https://api.github.com/orgs/${org.login}/repos?sort=pushed&per_page=30`, { headers });
+          return r.ok ? await r.json() : [];
+        } catch { return []; }
+      })
+    );
+
+    const orgReposFlat = orgRepoResults.flat();
+    console.log(`[repos] Org repos fetched: ${orgReposFlat.length}`);
+
+    // Merge and dedupe
+    const allRepos = [...userRepos, ...orgReposFlat];
+    const seen = new Set();
+    const deduped = allRepos.filter(r => {
+      if (seen.has(r.full_name)) return false;
+      seen.add(r.full_name);
+      return true;
     });
-    if (!ghRes.ok) throw new Error(`GitHub API ${ghRes.status}`);
-    const repos = await ghRes.json();
-    res.json(repos.map(r => ({
+
+    // Sort by most recently pushed
+    deduped.sort((a, b) => new Date(b.pushed_at || b.updated_at) - new Date(a.pushed_at || a.updated_at));
+
+    res.json(deduped.slice(0, 100).map(r => ({
       full_name: r.full_name,
       description: r.description,
       updated_at: r.updated_at,
       private: r.private,
+      owner: r.full_name.split('/')[0],
     })));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -140,6 +172,11 @@ app.get('/api/repo/:owner/:repo', async (req, res) => {
 // --- Serve viz page for /viz/:owner/:repo ---
 app.get('/viz/:owner/:repo', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'viz.html'));
+});
+
+// --- Serve compare page ---
+app.get('/compare/:ownerA/:repoA/:ownerB/:repoB', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'compare.html'));
 });
 
 // --- Static files ---

@@ -17,8 +17,9 @@
   }
   .container {
     text-align: center;
-    max-width: 480px;
+    max-width: 520px;
     padding: 24px;
+    width: 100%;
   }
   h1 {
     font-size: 28px;
@@ -28,12 +29,12 @@
   .subtitle {
     font-size: 14px;
     color: #8b949e;
-    margin-bottom: 32px;
+    margin-bottom: 24px;
   }
   .input-row {
     display: flex;
     gap: 8px;
-    margin-bottom: 16px;
+    margin-bottom: 8px;
   }
   input {
     flex: 1;
@@ -61,9 +62,7 @@
   }
   button:hover { background: #2ea043; }
   button:disabled { opacity: 0.5; cursor: default; }
-  .auth-section {
-    margin-bottom: 24px;
-  }
+  .auth-section { margin-bottom: 24px; }
   .auth-btn {
     background: #21262d;
     border: 1px solid #30363d;
@@ -81,23 +80,75 @@
     font-size: 14px;
     color: #8b949e;
   }
-  .user-info img {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
+  .user-info img { width: 24px; height: 24px; border-radius: 50%; }
+  .user-info a { color: #8b949e; font-size: 12px; margin-left: 8px; }
+  .error { color: #f85149; font-size: 13px; margin-top: 8px; }
+
+  /* Mode tabs */
+  .mode-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 20px;
+    justify-content: center;
   }
-  .user-info a {
+  .mode-tab {
+    padding: 8px 20px;
+    background: #0d1117;
+    border: 1px solid #30363d;
     color: #8b949e;
-    font-size: 12px;
-    margin-left: 8px;
-  }
-  .error {
-    color: #f85149;
+    cursor: pointer;
+    font-family: inherit;
     font-size: 13px;
-    margin-top: 8px;
   }
+  .mode-tab:first-child { border-radius: 6px 0 0 6px; }
+  .mode-tab:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+  .mode-tab.active { background: #21262d; color: #e6edf3; border-color: #58a6ff; }
+
+  /* Compare slots */
+  .compare-slots {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .slot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .slot-label {
+    font-size: 11px;
+    color: #484f58;
+    text-transform: uppercase;
+    width: 14px;
+    text-align: right;
+  }
+  .slot-value {
+    flex: 1;
+    padding: 10px 14px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #e6edf3;
+    font-family: inherit;
+    font-size: 14px;
+    outline: none;
+  }
+  .slot-value:focus { border-color: #58a6ff; }
+  .slot-clear {
+    background: none;
+    border: none;
+    color: #484f58;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 4px 8px;
+    line-height: 1;
+  }
+  .slot-clear:hover { color: #f85149; }
+
+  /* Repo list */
   .repos {
-    max-width: 480px;
+    max-width: 520px;
     margin: 0 auto 20px;
     text-align: left;
   }
@@ -109,10 +160,22 @@
     letter-spacing: 0.5px;
   }
   .repo-list {
-    max-height: 280px;
+    max-height: 320px;
     overflow-y: auto;
     border: 1px solid #30363d;
     border-radius: 6px;
+  }
+  .repo-group-header {
+    padding: 6px 14px;
+    font-size: 11px;
+    color: #484f58;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: #0d1117;
+    border-bottom: 1px solid #21262d;
+    position: sticky;
+    top: 0;
+    z-index: 1;
   }
   .repo-item {
     display: flex;
@@ -127,15 +190,8 @@
   }
   .repo-item:last-child { border-bottom: none; }
   .repo-item:hover { background: #21262d; }
-  .repo-name {
-    font-size: 14px;
-    color: #58a6ff;
-    white-space: nowrap;
-  }
-  .repo-lock {
-    font-size: 11px;
-    color: #8b949e;
-  }
+  .repo-name { font-size: 14px; color: #58a6ff; white-space: nowrap; }
+  .repo-lock { font-size: 11px; color: #8b949e; }
   .repo-desc {
     font-size: 12px;
     color: #8b949e;
@@ -147,6 +203,20 @@
   .repo-list::-webkit-scrollbar { width: 6px; }
   .repo-list::-webkit-scrollbar-track { background: transparent; }
   .repo-list::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+
+  /* Filled slot highlight */
+  .slot-value.filled {
+    border-color: #238636;
+    color: #58a6ff;
+  }
+  .slot-value::placeholder { color: #484f58; }
+
+  /* Compare hint */
+  .compare-hint {
+    font-size: 12px;
+    color: #484f58;
+    margin-bottom: 12px;
+  }
 </style>
 </head>
 <body>
@@ -157,21 +227,109 @@
 
   <div class="auth-section" id="auth-section"></div>
 
-  <div class="repos" id="repos-section" style="display:none"></div>
+  <div class="mode-tabs">
+    <button class="mode-tab active" data-mode="single">Visualize</button>
+    <button class="mode-tab" data-mode="compare">Compare</button>
+  </div>
 
-  <form id="form">
-    <div class="input-row">
-      <input type="text" id="repo-input" placeholder="owner/repo" autocomplete="off" autofocus>
-      <button type="submit" id="go-btn">Visualize</button>
+  <!-- Single mode -->
+  <div id="single-mode">
+    <form id="form">
+      <div class="input-row">
+        <input type="text" id="repo-input" placeholder="owner/repo" autocomplete="off" autofocus>
+        <button type="submit" id="go-btn">Visualize</button>
+      </div>
+    </form>
+    <div class="error" id="error"></div>
+  </div>
+
+  <!-- Compare mode -->
+  <div id="compare-mode" style="display:none">
+    <div class="compare-slots">
+      <div class="slot">
+        <span class="slot-label">A</span>
+        <input type="text" class="slot-value" id="slot-a" placeholder="owner/repo or click from list">
+        <button class="slot-clear" data-slot="a" title="Clear">&times;</button>
+      </div>
+      <div class="slot">
+        <span class="slot-label">B</span>
+        <input type="text" class="slot-value" id="slot-b" placeholder="owner/repo or click from list">
+        <button class="slot-clear" data-slot="b" title="Clear">&times;</button>
+      </div>
     </div>
-  </form>
-  <div class="error" id="error"></div>
+    <button id="compare-btn" disabled>Compare</button>
+    <div class="compare-hint" id="compare-hint">Select two repos to compare side-by-side</div>
+    <div class="error" id="compare-error"></div>
+  </div>
+
+  <div class="repos" id="repos-section" style="display:none"></div>
 </div>
 
 <script>
+let currentMode = 'single';
+let allRepos = [];
+
+// Mode tabs
+document.querySelectorAll('.mode-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentMode = tab.dataset.mode;
+    document.getElementById('single-mode').style.display = currentMode === 'single' ? '' : 'none';
+    document.getElementById('compare-mode').style.display = currentMode === 'compare' ? '' : 'none';
+  });
+});
+
+// Compare slot management
+function updateCompareBtn() {
+  const a = document.getElementById('slot-a').value.trim();
+  const b = document.getElementById('slot-b').value.trim();
+  document.getElementById('compare-btn').disabled = !(parseRepoInput(a) && parseRepoInput(b));
+}
+document.getElementById('slot-a').addEventListener('input', updateCompareBtn);
+document.getElementById('slot-b').addEventListener('input', updateCompareBtn);
+
+document.querySelectorAll('.slot-clear').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const slot = document.getElementById('slot-' + btn.dataset.slot);
+    slot.value = '';
+    slot.classList.remove('filled');
+    updateCompareBtn();
+  });
+});
+
+document.getElementById('compare-btn').addEventListener('click', () => {
+  const a = parseRepoInput(document.getElementById('slot-a').value);
+  const b = parseRepoInput(document.getElementById('slot-b').value);
+  const errorEl = document.getElementById('compare-error');
+  if (!a || !b) {
+    errorEl.textContent = 'Enter valid owner/repo for both slots';
+    return;
+  }
+  errorEl.textContent = '';
+  window.location.href = `/compare/${a.owner}/${a.repo}/${b.owner}/${b.repo}`;
+});
+
+function fillCompareSlot(fullName) {
+  const slotA = document.getElementById('slot-a');
+  const slotB = document.getElementById('slot-b');
+  if (!slotA.value.trim()) {
+    slotA.value = fullName;
+    slotA.classList.add('filled');
+  } else if (!slotB.value.trim()) {
+    slotB.value = fullName;
+    slotB.classList.add('filled');
+  } else {
+    // Both full — replace B
+    slotB.value = fullName;
+    slotB.classList.add('filled');
+  }
+  updateCompareBtn();
+}
+
+// Auth
 async function checkAuth() {
   const section = document.getElementById('auth-section');
-  const reposSection = document.getElementById('repos-section');
   try {
     const res = await fetch('/api/me');
     const data = await res.json();
@@ -182,46 +340,72 @@ async function checkAuth() {
           ${data.login}
           <a href="/auth/logout">logout</a>
         </span>`;
-      loadRepos(reposSection);
+      loadRepos();
     } else {
       section.innerHTML = `<button class="auth-btn" onclick="location.href='/auth/github'">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         Login with GitHub
       </button>`;
     }
-  } catch {
-    // API not available, skip auth display
-  }
+  } catch { /* skip */ }
 }
 
-async function loadRepos(container) {
+// Repos
+async function loadRepos() {
+  const container = document.getElementById('repos-section');
   try {
     const res = await fetch('/api/repos');
     if (!res.ok) return;
-    const repos = await res.json();
-    if (!repos.length) return;
+    allRepos = await res.json();
+    if (!allRepos.length) return;
     container.style.display = '';
-    container.innerHTML = `
-      <div class="repos-label">Your repos</div>
-      <div class="repo-list">
-        ${repos.map(r => {
-          const [owner, name] = r.full_name.split('/');
-          return `<a class="repo-item" href="/viz/${owner}/${name}">
-            <span class="repo-name">${r.full_name}</span>
-            ${r.private ? '<span class="repo-lock">&#128274;</span>' : ''}
-            <span class="repo-desc">${r.description || ''}</span>
-          </a>`;
-        }).join('')}
-      </div>`;
+    renderRepoList(container);
   } catch { /* ignore */ }
 }
 
+function renderRepoList(container) {
+  // Group by owner
+  const groups = new Map();
+  for (const r of allRepos) {
+    const owner = r.owner || r.full_name.split('/')[0];
+    if (!groups.has(owner)) groups.set(owner, []);
+    groups.get(owner).push(r);
+  }
+
+  let html = '<div class="repos-label">Your repos</div><div class="repo-list">';
+  for (const [owner, repos] of groups) {
+    if (groups.size > 1) {
+      html += `<div class="repo-group-header">${owner}</div>`;
+    }
+    for (const r of repos) {
+      const [o, name] = r.full_name.split('/');
+      html += `<a class="repo-item" href="/viz/${o}/${name}" data-fullname="${r.full_name}">
+        <span class="repo-name">${r.full_name}</span>
+        ${r.private ? '<span class="repo-lock">&#128274;</span>' : ''}
+        <span class="repo-desc">${r.description || ''}</span>
+      </a>`;
+    }
+  }
+  html += '</div>';
+  container.innerHTML = html;
+
+  // Handle clicks — in compare mode, fill slots instead of navigating
+  container.querySelectorAll('.repo-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      if (currentMode === 'compare') {
+        e.preventDefault();
+        fillCompareSlot(item.dataset.fullname);
+      }
+      // In single mode, default link behavior works
+    });
+  });
+}
+
 function parseRepoInput(val) {
+  if (!val) return null;
   val = val.trim();
-  // Handle full GitHub URLs
   const urlMatch = val.match(/github\.com\/([^/]+)\/([^/]+)/);
   if (urlMatch) return { owner: urlMatch[1], repo: urlMatch[2].replace(/\.git$/, '') };
-  // Handle owner/repo format
   const parts = val.split('/');
   if (parts.length === 2 && parts[0] && parts[1]) return { owner: parts[0], repo: parts[1] };
   return null;

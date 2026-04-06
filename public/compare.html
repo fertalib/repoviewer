@@ -1,0 +1,1303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Repoviewer — Compare</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0d1117;
+    color: #c9d1d9;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  #app {
+    display: flex;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  /* === SIDEBAR === */
+  #sidebar {
+    width: 280px;
+    min-width: 280px;
+    background: #0d1117;
+    border-right: 1px solid #21262d;
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    gap: 14px;
+    overflow-y: auto;
+  }
+  #sidebar-header { display: flex; align-items: center; gap: 8px; }
+  #sidebar-header a {
+    color: #8b949e;
+    text-decoration: none;
+    font-size: 18px;
+    line-height: 1;
+  }
+  #sidebar-header a:hover { color: #58a6ff; }
+  #sidebar-header h1 {
+    font-size: 14px;
+    color: #e6edf3;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sidebar-section {
+    border-top: 1px solid #21262d;
+    padding-top: 10px;
+  }
+  .sidebar-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #484f58;
+    margin-bottom: 6px;
+  }
+
+  /* Dual info grid */
+  .dual-info {
+    display: grid;
+    grid-template-columns: auto 1fr 1fr;
+    gap: 4px 10px;
+    font-size: 12px;
+  }
+  .dual-info .label { color: #484f58; font-size: 10px; }
+  .dual-info .val-a { color: #58a6ff; font-weight: 600; }
+  .dual-info .val-b { color: #f0883e; font-weight: 600; }
+
+  /* Commit info */
+  .commit-box {
+    font-size: 12px;
+    margin-bottom: 6px;
+  }
+  .commit-box .repo-tag {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-bottom: 2px;
+    display: inline-block;
+  }
+  .commit-box .repo-tag.a { background: rgba(88,166,255,0.15); color: #58a6ff; }
+  .commit-box .repo-tag.b { background: rgba(240,136,62,0.15); color: #f0883e; }
+  .commit-box .msg {
+    color: #c9d1d9;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .commit-box .meta { font-size: 11px; color: #484f58; }
+  .commit-box .meta span { color: #8b949e; }
+
+  /* Controls */
+  .control-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .control-row label {
+    font-size: 11px;
+    color: #8b949e;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  #controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  #play-btn {
+    background: none;
+    border: 1px solid #30363d;
+    color: #e6edf3;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #play-btn:hover { border-color: #58a6ff; }
+  #timeline {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    background: #21262d;
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+  #timeline::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #58a6ff;
+    cursor: pointer;
+  }
+  .mode-select {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  /* Legend */
+  #legend { font-size: 11px; color: #8b949e; }
+  .legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-right: 10px;
+    margin-bottom: 4px;
+  }
+  .legend-swatch { width: 10px; height: 10px; border-radius: 2px; }
+
+  /* Canvas */
+  #canvas-wrapper {
+    flex: 1;
+    position: relative;
+  }
+  #canvas-wrapper canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  /* Tooltip */
+  #tooltip {
+    display: none;
+    position: fixed;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    z-index: 100;
+    max-width: 300px;
+    line-height: 1.5;
+  }
+  #tooltip .filepath { color: #58a6ff; font-weight: 600; }
+  #tooltip .detail { color: #8b949e; }
+
+  /* === LOADING === */
+  #loading {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 12px;
+    font-size: 16px;
+    color: #8b949e;
+    z-index: 200;
+    background: #0d1117;
+  }
+  #loading .spinner {
+    width: 24px;
+    height: 24px;
+    border: 2px solid #30363d;
+    border-top-color: #58a6ff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <div id="loading-msg">Loading repository data...</div>
+</div>
+
+<div id="app" style="display:none">
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <a href="/" title="Back to home">&larr;</a>
+      <h1 id="compare-title"></h1>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Info</div>
+      <div class="dual-info">
+        <div class="label"></div><div class="val-a" style="font-size:10px;font-weight:400;color:#58a6ff">A</div><div class="val-b" style="font-size:10px;font-weight:400;color:#f0883e">B</div>
+        <div class="label">files</div><div class="val-a" id="info-files-a">-</div><div class="val-b" id="info-files-b">-</div>
+        <div class="label">lines</div><div class="val-a" id="info-lines-a">-</div><div class="val-b" id="info-lines-b">-</div>
+        <div class="label">commits</div><div class="val-a" id="info-commits-a">-</div><div class="val-b" id="info-commits-b">-</div>
+        <div class="label">current</div><div class="val-a" id="info-frame-a">-</div><div class="val-b" id="info-frame-b">-</div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Commits</div>
+      <div class="commit-box">
+        <span class="repo-tag a" id="tag-a">A</span>
+        <div class="msg" id="commit-msg-a">-</div>
+        <div class="meta"><span id="date-a">-</span></div>
+      </div>
+      <div class="commit-box">
+        <span class="repo-tag b" id="tag-b">B</span>
+        <div class="msg" id="commit-msg-b">-</div>
+        <div class="meta"><span id="date-b">-</span></div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Playback</div>
+      <div id="controls">
+        <button id="play-btn">&#9654;</button>
+        <input type="range" id="timeline" min="0" max="1000" value="0">
+      </div>
+      <div id="time-display" style="font-size:11px;color:#8b949e;margin-top:4px;text-align:center">0:00 / 1:00</div>
+      <div class="control-row" style="margin-top:8px">
+        <select id="duration-select" class="mode-select">
+          <option value="30000">30s</option>
+          <option value="60000" selected>1 min</option>
+          <option value="120000">2 min</option>
+          <option value="300000">5 min</option>
+        </select>
+        <select id="playback-mode" class="mode-select">
+          <option value="percommit">Per commit</option>
+          <option value="temporal" selected>Temporal</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Display</div>
+      <div class="control-row">
+        <select id="viz-mode" class="mode-select">
+          <option value="growth">Growth (shows scale)</option>
+          <option value="zoomout">Fit to canvas</option>
+        </select>
+      </div>
+      <div class="control-row" style="margin-top:8px">
+        <label><input type="checkbox" id="text-toggle"> Show file names</label>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Legend</div>
+      <div id="legend">
+        <div class="legend-item"><div class="legend-swatch" style="background:#2ecc71"></div> Fresh</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#3d6b3f"></div> Mature</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#6b5a3e"></div> Aging</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#8c7850"></div> Weathered</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#b2a480"></div> Legacy</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#afafa8"></div> Ancient</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Canvas viewer -->
+  <div id="canvas-wrapper">
+    <canvas id="canvas"></canvas>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+// ===================== CONFIG =====================
+const BLOCK_SIZE = 8;
+const OCEAN_COLOR = '#191942';
+const FILE_BORDER = 0.5;
+const ISLAND_GAP = 0;
+
+const AGE_STAGES = [
+  { pos: 0.0,  r: 46,  g: 204, b: 113 },
+  { pos: 0.2,  r: 61,  g: 107, b: 63  },
+  { pos: 0.4,  r: 107, g: 90,  b: 62  },
+  { pos: 0.6,  r: 140, g: 120, b: 80  },
+  { pos: 0.8,  r: 178, g: 164, b: 128 },
+  { pos: 1.0,  r: 175, g: 175, b: 168 },
+];
+
+const FOLDER_TINTS = [
+  { r: 0, g: 0, b: 0 },
+  { r: 8, g: -4, b: -4 },
+  { r: -4, g: 4, b: 8 },
+  { r: 6, g: 6, b: -6 },
+  { r: -6, g: 4, b: 6 },
+  { r: 6, g: -2, b: 6 },
+  { r: -4, g: 6, b: -2 },
+  { r: 4, g: -4, b: 8 },
+];
+
+// ===================== STATE =====================
+let playing = false;
+let lastTimestamp = 0;
+let hoveredFile = null;
+
+// Film timeline
+let filmDuration = 60000;
+let filmTime = 0;
+let playbackMode = 'temporal'; // default temporal for comparison
+let zoomOutProgress = 0;
+let vizMode = 'growth';
+let showTextLabels = false;
+let maxRepoSpan = 0; // max(endA - startA, endB - startB) — shared time base
+
+// Per-repo state
+const repoState = {
+  a: { data: null, snapshots: [], stableFileOrder: [], commitDates: [], startDate: 0, endDate: 0,
+       cache: { prevIdx: -1, nextIdx: -1, prevLayout: null, nextLayout: null, transitionMap: null },
+       boundsCache: new Map(), currentFrame: 0, totalLinesPerFrame: [] },
+  b: { data: null, snapshots: [], stableFileOrder: [], commitDates: [], startDate: 0, endDate: 0,
+       cache: { prevIdx: -1, nextIdx: -1, prevLayout: null, nextLayout: null, transitionMap: null },
+       boundsCache: new Map(), currentFrame: 0, totalLinesPerFrame: [] },
+};
+
+let currentRenderScale = 1;
+
+// Canvas
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+// ===================== URL PARSING =====================
+function getReposFromUrl() {
+  const m = window.location.pathname.match(/^\/compare\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)/);
+  if (m) return { a: { owner: m[1], repo: m[2] }, b: { owner: m[3], repo: m[4] } };
+  return null;
+}
+
+async function loadRepoData(owner, repo) {
+  const res = await fetch(`/api/repo/${owner}/${repo}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to fetch ${owner}/${repo} (${res.status})`);
+  }
+  return res.json();
+}
+
+// ===================== TIME MAPPING (parameterized) =====================
+function getTimeMapping(ft, snapshots, commitDates, startDate, endDate) {
+  const N = snapshots.length;
+  if (N === 0) return { prevIdx: 0, nextIdx: 0, t: 0, repoTime: 0 };
+  if (N === 1) return { prevIdx: 0, nextIdx: 0, t: 0, repoTime: commitDates[0] };
+
+  const frac = clamp(ft / filmDuration, 0, 1);
+
+  if (playbackMode === 'percommit') {
+    const progress = frac * (N - 1);
+    const prevIdx = Math.min(Math.floor(progress), N - 2);
+    const nextIdx = Math.min(prevIdx + 1, N - 1);
+    const t = progress - prevIdx;
+    const repoTime = commitDates[prevIdx] + (commitDates[nextIdx] - commitDates[prevIdx]) * t;
+    return { prevIdx, nextIdx, t, repoTime };
+  } else {
+    // Temporal: both repos share the same elapsed-days scale.
+    // filmDuration maps to maxRepoSpan (the longer repo's duration).
+    // The shorter repo finishes early and stays at its final state.
+    const elapsed = frac * maxRepoSpan;
+    const repoTime = startDate + elapsed;
+
+    // If this repo is already past its end, clamp to final frame
+    if (repoTime >= endDate) {
+      return { prevIdx: N - 1, nextIdx: N - 1, t: 0, repoTime: endDate };
+    }
+
+    let lo = 0, hi = N - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (commitDates[mid] <= repoTime) lo = mid;
+      else hi = mid - 1;
+    }
+    const prevIdx = lo;
+    const nextIdx = Math.min(prevIdx + 1, N - 1);
+    if (prevIdx === nextIdx) return { prevIdx, nextIdx, t: 0, repoTime };
+    const span = commitDates[nextIdx] - commitDates[prevIdx];
+    const t = span > 0 ? (repoTime - commitDates[prevIdx]) / span : 0;
+    return { prevIdx, nextIdx, t: clamp(t, 0, 1), repoTime };
+  }
+}
+
+function ensureLayoutCache(rs, mapping) {
+  const { prevIdx, nextIdx } = mapping;
+  const c = rs.cache;
+  if (prevIdx === c.prevIdx && nextIdx === c.nextIdx) return;
+
+  if (prevIdx !== c.prevIdx) {
+    c.prevLayout = computeTreemap(rs.snapshots[prevIdx].files, canvas.width, canvas.height / 2, rs.stableFileOrder);
+    rs.boundsCache.set(prevIdx, getIslandBounds(c.prevLayout));
+  }
+  if (nextIdx !== c.nextIdx) {
+    if (nextIdx === prevIdx) {
+      c.nextLayout = c.prevLayout;
+    } else {
+      c.nextLayout = computeTreemap(rs.snapshots[nextIdx].files, canvas.width, canvas.height / 2, rs.stableFileOrder);
+      rs.boundsCache.set(nextIdx, getIslandBounds(c.nextLayout));
+    }
+  }
+
+  c.transitionMap = (prevIdx === nextIdx) ? null : buildTransitionMap(c.prevLayout, c.nextLayout);
+  c.prevIdx = prevIdx;
+  c.nextIdx = nextIdx;
+}
+
+function seekToFilmTime(t) {
+  filmTime = clamp(t, 0, filmDuration);
+  repoState.a.cache.prevIdx = -1;
+  repoState.a.cache.nextIdx = -1;
+  repoState.b.cache.prevIdx = -1;
+  repoState.b.cache.nextIdx = -1;
+}
+
+function formatFilmTime(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return `${min}:${sec.toString().padStart(2, '0')}`;
+}
+
+// ===================== PATCH PARSING =====================
+function parseHunks(patch) {
+  if (!patch) return [];
+  const lines = patch.split('\n');
+  const hunks = [];
+  let current = null;
+  for (const line of lines) {
+    const m = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+    if (m) {
+      current = { oldStart: parseInt(m[1]), oldCount: parseInt(m[2] ?? '1'),
+                   newStart: parseInt(m[3]), newCount: parseInt(m[4] ?? '1'), lines: [] };
+      hunks.push(current);
+    } else if (current) {
+      if (line.startsWith('+'))      current.lines.push({ type: 'add' });
+      else if (line.startsWith('-')) current.lines.push({ type: 'del' });
+      else if (line.startsWith(' ')) current.lines.push({ type: 'ctx' });
+    }
+  }
+  return hunks;
+}
+
+function applyPatch(lineArray, patch, date, sha) {
+  if (!patch) return lineArray.map(() => ({ date, sha }));
+  const result = [...lineArray];
+  const hunks = parseHunks(patch);
+  let offset = 0;
+  for (const hunk of hunks) {
+    let pos = hunk.oldStart - 1 + offset;
+    for (const line of hunk.lines) {
+      if (line.type === 'ctx') { pos++; }
+      else if (line.type === 'del') { if (pos < result.length) result.splice(pos, 1); offset--; }
+      else if (line.type === 'add') { result.splice(pos, 0, { date, sha }); pos++; offset++; }
+    }
+  }
+  return result;
+}
+
+// ===================== SNAPSHOT BUILDER =====================
+function buildSnapshots(data) {
+  const fileStates = new Map();
+  const snaps = [];
+  for (const commit of data.commits) {
+    const changed = { added: [], removed: [], modified: [] };
+    for (const file of commit.files) {
+      const key = file.filename;
+      if (file.status === 'added') {
+        fileStates.set(key, Array(file.additions).fill({ date: commit.date, sha: commit.sha }));
+        changed.added.push(key);
+      } else if (file.status === 'removed') {
+        changed.removed.push(key);
+        fileStates.delete(key);
+      } else if (file.status === 'renamed') {
+        const old = fileStates.get(file.previous_filename) || [];
+        fileStates.delete(file.previous_filename);
+        fileStates.set(key, applyPatch(old, file.patch, commit.date, commit.sha));
+        changed.removed.push(file.previous_filename);
+        changed.added.push(key);
+      } else {
+        const old = fileStates.get(key) || [];
+        fileStates.set(key, applyPatch(old, file.patch, commit.date, commit.sha));
+        changed.modified.push(key);
+      }
+    }
+    const filesSnapshot = {};
+    for (const [path, lines] of fileStates) {
+      filesSnapshot[path] = { lines: lines.length, blame: [...lines] };
+    }
+    const pr = data.pullRequests.find(p => p.mergeCommitSha === commit.sha);
+    snaps.push({ sha: commit.sha, message: commit.message, date: commit.date,
+                 author: commit.author, files: filesSnapshot, changed, pr: pr || null });
+  }
+  return snaps;
+}
+
+// ===================== NOISE =====================
+const _noiseP = [];
+for (let i = 0; i < 256; i++) _noiseP.push(i);
+for (let i = 255; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [_noiseP[i], _noiseP[j]] = [_noiseP[j], _noiseP[i]]; }
+const _noisePerm = [..._noiseP, ..._noiseP];
+function noise2D(x, y) {
+  const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+  const xf = x - Math.floor(x), yf = y - Math.floor(y);
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const aa = _noisePerm[_noisePerm[X] + Y], ab = _noisePerm[_noisePerm[X] + Y + 1];
+  const ba = _noisePerm[_noisePerm[X + 1] + Y], bb = _noisePerm[_noisePerm[X + 1] + Y + 1];
+  const l1 = aa / 255 + u * (ba / 255 - aa / 255);
+  const l2 = ab / 255 + u * (bb / 255 - ab / 255);
+  return l1 + v * (l2 - l1);
+}
+
+// ===================== MOUNTAIN ISLAND LAYOUT =====================
+const MOUNTAIN_ALPHA = 0.5;
+const MAX_ADJ_HEIGHT_DIFF = 32;
+
+function buildStableOrder(snapshots) {
+  const finalSnap = snapshots[snapshots.length - 1];
+  const files = Object.entries(finalSnap.files).map(([path, f]) => ({
+    path,
+    lines: f.lines,
+    folder: path.includes('/') ? path.substring(0, path.lastIndexOf('/')) : '.',
+  }));
+  files.sort((a, b) => b.lines - a.lines);
+  const order = [];
+  let left = true;
+  for (const f of files) {
+    if (left) order.push(f.path);
+    else order.unshift(f.path);
+    left = !left;
+  }
+  // Include files from earlier snapshots not in final
+  const finalPaths = new Set(order);
+  for (let i = snapshots.length - 2; i >= 0; i--) {
+    for (const p of Object.keys(snapshots[i].files)) {
+      if (!finalPaths.has(p)) { order.push(p); finalPaths.add(p); }
+    }
+  }
+  return order;
+}
+
+function computeTreemap(filesObj, canvasW, canvasH, stableOrder) {
+  const entries = Object.entries(filesObj).map(([path, f]) => ({
+    path, value: Math.max(1, Math.ceil(f.lines)),
+    blame: f.blame || [],
+    folder: path.includes('/') ? path.substring(0, path.lastIndexOf('/')) : '.',
+  }));
+  if (entries.length === 0) return { files: [] };
+
+  const folders = [...new Set(entries.map(e => e.folder))].sort();
+  const folderMap = new Map(folders.map((f, i) => [f, i]));
+  for (const e of entries) e.folderIdx = folderMap.get(e.folder);
+
+  const entryMap = new Map(entries.map(e => [e.path, e]));
+  const orderedFiles = [];
+  for (const path of stableOrder) {
+    const e = entryMap.get(path);
+    if (e) orderedFiles.push(e);
+  }
+  for (const e of entries) {
+    if (!stableOrder.includes(e.path)) orderedFiles.push(e);
+  }
+
+  const maxValue = Math.max(...orderedFiles.map(f => f.value));
+  const maxH = canvasH * 0.8;
+
+  for (const f of orderedFiles) {
+    const normalizedSize = f.value / maxValue;
+    const rawH = maxH * Math.pow(normalizedSize, MOUNTAIN_ALPHA);
+    const hBlocks = Math.max(1, Math.round(rawH / BLOCK_SIZE));
+    f.h = hBlocks * BLOCK_SIZE;
+    const wBlocks = Math.max(1, Math.ceil(f.value / hBlocks));
+    f.w = wBlocks * BLOCK_SIZE;
+    f.lines = f.value;
+  }
+
+  // Height smoothing passes
+  for (let pass = 0; pass < 6; pass++) {
+    for (let i = 0; i < orderedFiles.length - 1; i++) {
+      const a = orderedFiles[i], b = orderedFiles[i + 1];
+      if (Math.abs(a.h - b.h) > MAX_ADJ_HEIGHT_DIFF) {
+        const shorter = a.h < b.h ? a : b;
+        const taller = a.h < b.h ? b : a;
+        shorter.h = taller.h - MAX_ADJ_HEIGHT_DIFF;
+        shorter.h = Math.max(BLOCK_SIZE, Math.round(shorter.h / BLOCK_SIZE) * BLOCK_SIZE);
+        const hBlocks = shorter.h / BLOCK_SIZE;
+        const wBlocks = Math.max(1, Math.ceil(shorter.value / hBlocks));
+        shorter.w = wBlocks * BLOCK_SIZE;
+      }
+    }
+  }
+
+  // Place left to right, vertically centered
+  const totalW = orderedFiles.reduce((s, f) => s + f.w, 0);
+  let curX = (canvasW - totalW) / 2;
+  const midY = canvasH * 0.5;
+  const placed = [];
+  for (const f of orderedFiles) {
+    f.x = curX;
+    f.y = midY - f.h / 2;
+    curX += f.w;
+    placed.push(f);
+  }
+  return { files: placed };
+}
+
+// ===================== EASING =====================
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+// ===================== TRANSITION SYSTEM =====================
+function buildTransitionMap(prev, next) {
+  const prevMap = new Map();
+  const nextMap = new Map();
+  if (prev) for (const f of prev.files) prevMap.set(f.path, f);
+  if (next) for (const f of next.files) nextMap.set(f.path, f);
+
+  const continuing = [], entering = [], exiting = [];
+
+  for (const [path, nf] of nextMap) {
+    const pf = prevMap.get(path);
+    if (pf) {
+      continuing.push({ path, from: { x: pf.x, y: pf.y, w: pf.w, h: pf.h }, to: { x: nf.x, y: nf.y, w: nf.w, h: nf.h }, fileData: nf });
+    } else {
+      entering.push({ path, to: { x: nf.x, y: nf.y, w: nf.w, h: nf.h }, fileData: nf });
+    }
+  }
+  for (const [path, pf] of prevMap) {
+    if (!nextMap.has(path)) {
+      exiting.push({ path, from: { x: pf.x, y: pf.y, w: pf.w, h: pf.h }, fileData: pf });
+    }
+  }
+
+  // Ripple delays
+  const changedCenters = [];
+  for (const e of entering) changedCenters.push({ cx: e.to.x + e.to.w / 2, cy: e.to.y + e.to.h / 2 });
+  for (const e of exiting) changedCenters.push({ cx: e.from.x + e.from.w / 2, cy: e.from.y + e.from.h / 2 });
+  for (const c of continuing) {
+    if (Math.abs(c.to.w - c.from.w) > 2 || Math.abs(c.to.h - c.from.h) > 2) {
+      changedCenters.push({ cx: c.to.x + c.to.w / 2, cy: c.to.y + c.to.h / 2 });
+    }
+  }
+
+  for (const c of continuing) {
+    const fx = (c.from.x + c.to.x) / 2 + (c.from.w + c.to.w) / 4;
+    const fy = (c.from.y + c.to.y) / 2 + (c.from.h + c.to.h) / 4;
+    let minDist = Infinity;
+    for (const cc of changedCenters) {
+      const d = Math.hypot(fx - cc.cx, fy - cc.cy);
+      if (d < minDist) minDist = d;
+    }
+    c.delay = changedCenters.length > 0 ? clamp(minDist / 600, 0, 0.3) : 0;
+  }
+
+  return { continuing, entering, exiting };
+}
+
+function buildInterpolatedLayout(tMap, t, stableOrder) {
+  const dimMap = new Map();
+
+  let prevTotalW = 0, nextTotalW = 0;
+  for (const c of tMap.continuing) { prevTotalW += c.from.w; nextTotalW += c.to.w; }
+  for (const e of tMap.entering) { nextTotalW += e.to.w; }
+  for (const e of tMap.exiting) { prevTotalW += e.from.w; }
+  const targetTotalW = prevTotalW + (nextTotalW - prevTotalW) * t;
+
+  for (const c of tMap.continuing) {
+    const ht = clamp((t - c.delay * 0.3) / (1 - c.delay * 0.3), 0, 1);
+    dimMap.set(c.path, { fileData: c.fileData,
+      w: c.from.w + (c.to.w - c.from.w) * t,
+      h: c.from.h + (c.to.h - c.from.h) * ht,
+      _entering: false, _exiting: false, _transitionT: t });
+  }
+  for (const e of tMap.entering) {
+    const growT = clamp((t - 0.1) / 0.7, 0, 1);
+    dimMap.set(e.path, { fileData: e.fileData, w: e.to.w * t, h: e.to.h * growT,
+      _entering: true, _exiting: false, _transitionT: t });
+  }
+  for (const e of tMap.exiting) {
+    dimMap.set(e.path, { fileData: e.fileData, w: e.from.w * (1 - t), h: e.from.h * (1 - t),
+      _entering: false, _exiting: true, _transitionT: t });
+  }
+
+  const orderedDims = [];
+  for (const path of stableOrder) {
+    const d = dimMap.get(path);
+    if (d && d.w >= 0.5) orderedDims.push(d);
+  }
+
+  const rawTotalW = orderedDims.reduce((s, d) => s + d.w, 0);
+  if (rawTotalW > 0) {
+    const scale = targetTotalW / rawTotalW;
+    for (const d of orderedDims) d.w *= scale;
+  }
+
+  const files = [];
+  const midY = canvas.height / 4; // half-canvas center
+  const finalTotalW = orderedDims.reduce((s, d) => s + d.w, 0);
+  let curX = (canvas.width - finalTotalW) / 2;
+  for (const d of orderedDims) {
+    if (d.h < 0.5) { curX += d.w; continue; }
+    files.push({ ...d.fileData, x: curX, y: midY - d.h / 2, w: d.w, h: d.h,
+      _entering: d._entering, _exiting: d._exiting, _transitionT: d._transitionT });
+    curX += d.w;
+  }
+  return { files };
+}
+
+// ===================== COLOR =====================
+function ageToColor(normalizedAge) {
+  const t = clamp(normalizedAge, 0, 1);
+  for (let i = 0; i < AGE_STAGES.length - 1; i++) {
+    if (t <= AGE_STAGES[i + 1].pos) {
+      const a = AGE_STAGES[i], b = AGE_STAGES[i + 1];
+      const f = (t - a.pos) / (b.pos - a.pos);
+      return { r: Math.round(a.r + (b.r - a.r) * f), g: Math.round(a.g + (b.g - a.g) * f), b: Math.round(a.b + (b.b - a.b) * f) };
+    }
+  }
+  const last = AGE_STAGES[AGE_STAGES.length - 1];
+  return { r: last.r, g: last.g, b: last.b };
+}
+
+function colorToCSS(c) { return `rgb(${c.r},${c.g},${c.b})`; }
+function lerpColor(a, b, t) {
+  return { r: Math.round(a.r + (b.r - a.r) * t), g: Math.round(a.g + (b.g - a.g) * t), b: Math.round(a.b + (b.b - a.b) * t) };
+}
+
+// ===================== RENDERING =====================
+function resizeCanvas() {
+  const wrapper = document.getElementById('canvas-wrapper');
+  canvas.width = wrapper.clientWidth;
+  canvas.height = wrapper.clientHeight;
+}
+
+function getIslandBounds(layout) {
+  if (!layout || !layout.files.length) return { w: 100, h: 100 };
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const f of layout.files) {
+    minX = Math.min(minX, f.x);
+    maxX = Math.max(maxX, f.x + f.w);
+    minY = Math.min(minY, f.y);
+    maxY = Math.max(maxY, f.y + f.h);
+  }
+  return { w: maxX - minX, h: maxY - minY };
+}
+
+function getFitScale(islandW, islandH, viewW, viewH) {
+  const targetW = viewW * 0.8;
+  const targetH = viewH * 0.8;
+  return Math.min(targetW / islandW, targetH / islandH, 3.0);
+}
+
+function computeSharedScale(boundsA, boundsB, viewW, viewH) {
+  // The larger island sets the scale so both fit and are proportional
+  const maxW = Math.max(boundsA.w, boundsB.w, 1);
+  const maxH = Math.max(boundsA.h, boundsB.h, 1);
+  return getFitScale(maxW, maxH, viewW, viewH);
+}
+
+function computeMedianLifespan(snapshot) {
+  const dates = [];
+  for (const file of Object.values(snapshot.files)) {
+    for (const line of file.blame) {
+      dates.push(new Date(line.date).getTime());
+    }
+  }
+  if (dates.length === 0) return 1;
+  const sorted = dates.sort((a, b) => a - b);
+  return Math.max(sorted[sorted.length - 1] - sorted[0], 24 * 60 * 60 * 1000);
+}
+
+function drawOcean() {
+  ctx.fillStyle = OCEAN_COLOR;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const now = performance.now();
+  ctx.fillStyle = 'rgba(25,25,80,0.4)';
+  const seed = Math.floor(now / 3000);
+  for (let i = 0; i < 80; i++) {
+    const hash = (seed * 31 + i * 97) & 0xFFFF;
+    const x = (hash * 7 + i * 131) % canvas.width;
+    const y = (hash * 13 + i * 67) % canvas.height;
+    const sz = 1 + (hash % 3);
+    ctx.globalAlpha = 0.15 + 0.1 * Math.sin(now / 2000 + i);
+    ctx.fillRect(x, y, sz, sz);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawIsland(repoTime, now, renderLayout, snapshot) {
+  if (!renderLayout || !renderLayout.files.length) return;
+  const currentDate = repoTime;
+  const lifespan = computeMedianLifespan(snapshot);
+
+  const LAVA_COLOR_DARK = { r: 180, g: 30, b: 20 };
+  const LAVA_COLOR_BRIGHT = { r: 220, g: 120, b: 30 };
+  const GROWTH_COLOR = { r: 46, g: 255, b: 100 };
+
+  // Exiting glow pass
+  for (const file of renderLayout.files) {
+    if (!file._exiting || file.w < 1 || file.h < 1) continue;
+    const t = file._transitionT || 0;
+    const glowAlpha = 0.25 * (1 - t);
+    if (glowAlpha > 0.01) {
+      ctx.save(); ctx.globalAlpha = glowAlpha;
+      ctx.fillStyle = colorToCSS(LAVA_COLOR_BRIGHT);
+      ctx.fillRect(file.x - 3, file.y - 3, file.w + 6, file.h + 6);
+      ctx.restore();
+    }
+  }
+
+  // Main block pass
+  for (const file of renderLayout.files) {
+    if (file.w < 2 || file.h < 2) continue;
+    const tint = FOLDER_TINTS[file.folderIdx % FOLDER_TINTS.length];
+    const cols = Math.max(1, Math.round(file.w / BLOCK_SIZE));
+    const rows = Math.max(1, Math.round(file.h / BLOCK_SIZE));
+    const totalBlocks = cols * rows;
+    const linesPerBlock = Math.max(1, file.lines / totalBlocks);
+    const fileCx = file.w / 2, fileCy = file.h / 2;
+    const maxRadius = Math.hypot(fileCx, fileCy);
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const bx = file.x + c * BLOCK_SIZE;
+        const by = file.y + r * BLOCK_SIZE;
+
+        if (file._entering) {
+          const t = file._transitionT || 0;
+          const bcx = (c + 0.5) * BLOCK_SIZE, bcy = (r + 0.5) * BLOCK_SIZE;
+          const dist = Math.hypot(bcx - fileCx, bcy - fileCy);
+          if (dist > maxRadius * clamp(t * 1.5, 0, 1)) continue;
+        }
+
+        const blockIndex = r * cols + c;
+        const lineStart = Math.floor(blockIndex * linesPerBlock);
+        const lineEnd = Math.min(Math.floor((blockIndex + 1) * linesPerBlock), file.lines);
+
+        let newestDate = 0;
+        for (let l = lineStart; l < lineEnd && l < file.blame.length; l++) {
+          const d = new Date(file.blame[l].date).getTime();
+          if (d > newestDate) newestDate = d;
+        }
+        if (newestDate === 0 && file.blame.length > 0) newestDate = new Date(file.blame[0].date).getTime();
+
+        const age = (currentDate - newestDate) / lifespan;
+        let color = ageToColor(age);
+        color = { r: clamp(color.r + tint.r, 0, 255), g: clamp(color.g + tint.g, 0, 255), b: clamp(color.b + tint.b, 0, 255) };
+
+        if (file._exiting) {
+          const t = file._transitionT || 0;
+          const bcx = (c + 0.5) * BLOCK_SIZE, bcy = (r + 0.5) * BLOCK_SIZE;
+          const dist = Math.hypot(bcx - fileCx, bcy - fileCy) / maxRadius;
+          const burnProgress = clamp(t * 2 - dist * 0.5, 0, 1);
+          color = lerpColor(color, lerpColor(LAVA_COLOR_DARK, LAVA_COLOR_BRIGHT, burnProgress), clamp(t * 1.8, 0, 1));
+        } else if (file._entering) {
+          const t = file._transitionT || 0;
+          color = lerpColor(color, GROWTH_COLOR, clamp(1 - t * 1.2, 0, 0.7));
+        }
+
+        ctx.fillStyle = colorToCSS(color);
+        ctx.fillRect(bx, by, Math.ceil(BLOCK_SIZE), Math.ceil(BLOCK_SIZE));
+      }
+    }
+
+    ctx.strokeStyle = 'rgba(25,25,66,0.3)';
+    ctx.lineWidth = FILE_BORDER;
+    ctx.strokeRect(file.x, file.y, file.w, file.h);
+  }
+}
+
+function drawTextLabels(layout, scale) {
+  if (!showTextLabels) return;
+  ctx.save();
+  for (const file of layout.files) {
+    const effectiveW = file.w * scale;
+    if (effectiveW < 40) continue;
+    const filename = file.path.split('/').pop();
+    const fontSize = Math.max(8, Math.min(12, effectiveW / filename.length * 1.2));
+    ctx.font = `${fontSize / scale}px 'JetBrains Mono', monospace`;
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(filename, file.x + file.w / 2, file.y + file.h / 2, file.w * 0.9);
+  }
+  ctx.restore();
+}
+
+function drawRepoLabel(text, x, y, color) {
+  ctx.save();
+  ctx.font = '12px JetBrains Mono, monospace';
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.5;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+function drawDivider() {
+  const y = canvas.height / 2;
+  ctx.strokeStyle = 'rgba(33,38,45,0.6)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, y);
+  ctx.lineTo(canvas.width, y);
+  ctx.stroke();
+}
+
+// ===================== ANIMATION =====================
+let prBannerA = null;
+let prBannerB = null;
+
+function tick(timestamp) {
+  requestAnimationFrame(tick);
+  if (!lastTimestamp) lastTimestamp = timestamp;
+  const dt = timestamp - lastTimestamp;
+  lastTimestamp = timestamp;
+
+  const rsA = repoState.a, rsB = repoState.b;
+  if (rsA.snapshots.length === 0 || rsB.snapshots.length === 0) {
+    drawOcean();
+    return;
+  }
+
+  // Advance film time
+  if (playing) {
+    filmTime += dt;
+    if (filmTime >= filmDuration) {
+      filmTime = filmDuration;
+      playing = false;
+      updatePlayButton();
+    }
+  }
+
+  // Map time for each repo independently
+  const mapA = getTimeMapping(filmTime, rsA.snapshots, rsA.commitDates, rsA.startDate, rsA.endDate);
+  const mapB = getTimeMapping(filmTime, rsB.snapshots, rsB.commitDates, rsB.startDate, rsB.endDate);
+
+  ensureLayoutCache(rsA, mapA);
+  ensureLayoutCache(rsB, mapB);
+
+  // Derive current frames
+  rsA.currentFrame = mapA.t < 0.5 ? mapA.prevIdx : mapA.nextIdx;
+  rsB.currentFrame = mapB.t < 0.5 ? mapB.prevIdx : mapB.nextIdx;
+
+  // Build interpolated layouts
+  let layoutA, layoutB;
+  if (rsA.cache.transitionMap) {
+    layoutA = buildInterpolatedLayout(rsA.cache.transitionMap, easeInOutCubic(mapA.t), rsA.stableFileOrder);
+  } else {
+    layoutA = rsA.cache.prevLayout;
+  }
+  if (rsB.cache.transitionMap) {
+    layoutB = buildInterpolatedLayout(rsB.cache.transitionMap, easeInOutCubic(mapB.t), rsB.stableFileOrder);
+  } else {
+    layoutB = rsB.cache.prevLayout;
+  }
+
+  // Compute shared scale
+  const boundsA = layoutA ? getIslandBounds(layoutA) : { w: 1, h: 1 };
+  const boundsB = layoutB ? getIslandBounds(layoutB) : { w: 1, h: 1 };
+  const halfH = canvas.height / 2;
+
+  if (vizMode === 'growth') {
+    // Growth: use the largest final island as reference
+    const finalBoundsA = rsA.boundsCache.get(rsA.snapshots.length - 1) || boundsA;
+    const finalBoundsB = rsB.boundsCache.get(rsB.snapshots.length - 1) || boundsB;
+    const maxFinalW = Math.max(finalBoundsA.w, finalBoundsB.w, 1);
+    const maxFinalH = Math.max(finalBoundsA.h, finalBoundsB.h, 1);
+    currentRenderScale = getFitScale(maxFinalW, maxFinalH, canvas.width, halfH);
+  } else {
+    // Zoomout: camera tracks the larger current island
+    zoomOutProgress = filmTime / filmDuration;
+    // Interpolate between initial and final scales
+    const bounds0A = rsA.boundsCache.get(0) || { w: 1, h: 1 };
+    const bounds0B = rsB.boundsCache.get(0) || { w: 1, h: 1 };
+    const finalBoundsA = rsA.boundsCache.get(rsA.snapshots.length - 1) || boundsA;
+    const finalBoundsB = rsB.boundsCache.get(rsB.snapshots.length - 1) || boundsB;
+    const maxW0 = Math.max(bounds0A.w, bounds0B.w, 1);
+    const maxH0 = Math.max(bounds0A.h, bounds0B.h, 1);
+    const maxWF = Math.max(finalBoundsA.w, finalBoundsB.w, 1);
+    const maxHF = Math.max(finalBoundsA.h, finalBoundsB.h, 1);
+    const scale0 = getFitScale(maxW0, maxH0, canvas.width, halfH);
+    const scaleF = getFitScale(maxWF, maxHF, canvas.width, halfH);
+    currentRenderScale = scale0 + (scaleF - scale0) * zoomOutProgress;
+  }
+
+  // Render
+  drawOcean();
+
+  const cx = canvas.width / 2;
+
+  // Top half: repo A
+  if (layoutA) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, canvas.width, halfH);
+    ctx.clip();
+    ctx.translate(cx, halfH / 2);
+    ctx.scale(currentRenderScale, currentRenderScale);
+    ctx.translate(-cx, -halfH / 2);
+    drawIsland(mapA.repoTime, timestamp, layoutA, rsA.snapshots[rsA.currentFrame]);
+    drawTextLabels(layoutA, currentRenderScale);
+    ctx.restore();
+  }
+
+  // Bottom half: repo B
+  if (layoutB) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, halfH, canvas.width, halfH);
+    ctx.clip();
+    ctx.translate(cx, halfH + halfH / 2);
+    ctx.scale(currentRenderScale, currentRenderScale);
+    ctx.translate(-cx, -(halfH + halfH / 2));
+    // Offset layoutB to bottom half
+    const offsetLayout = { files: layoutB.files.map(f => ({ ...f, y: f.y + halfH })) };
+    drawIsland(mapB.repoTime, timestamp, offsetLayout, rsB.snapshots[rsB.currentFrame]);
+    drawTextLabels(offsetLayout, currentRenderScale);
+    ctx.restore();
+  }
+
+  // Divider and labels
+  drawDivider();
+  const repos = getReposFromUrl();
+  if (repos) {
+    drawRepoLabel(`${repos.a.owner}/${repos.a.repo}`, 10, 10, '#58a6ff');
+    drawRepoLabel(`${repos.b.owner}/${repos.b.repo}`, 10, halfH + 10, '#f0883e');
+  }
+
+  updateUI();
+}
+
+function updateUI() {
+  const rsA = repoState.a, rsB = repoState.b;
+  if (!rsA.snapshots.length || !rsB.snapshots.length) return;
+
+  const snapA = rsA.snapshots[rsA.currentFrame];
+  const snapB = rsB.snapshots[rsB.currentFrame];
+
+  // Timeline
+  document.getElementById('timeline').value = Math.round((filmTime / filmDuration) * 1000);
+  const td = document.getElementById('time-display');
+  if (td) td.textContent = `${formatFilmTime(filmTime)} / ${formatFilmTime(filmDuration)}`;
+
+  // Info grid
+  const filesA = Object.keys(snapA.files).length;
+  const filesB = Object.keys(snapB.files).length;
+  const linesA = Object.values(snapA.files).reduce((s, f) => s + f.lines, 0);
+  const linesB = Object.values(snapB.files).reduce((s, f) => s + f.lines, 0);
+
+  document.getElementById('info-files-a').textContent = filesA;
+  document.getElementById('info-files-b').textContent = filesB;
+  document.getElementById('info-lines-a').textContent = linesA.toLocaleString();
+  document.getElementById('info-lines-b').textContent = linesB.toLocaleString();
+  document.getElementById('info-commits-a').textContent = rsA.snapshots.length;
+  document.getElementById('info-commits-b').textContent = rsB.snapshots.length;
+  document.getElementById('info-frame-a').textContent = `${rsA.currentFrame + 1}/${rsA.snapshots.length}`;
+  document.getElementById('info-frame-b').textContent = `${rsB.currentFrame + 1}/${rsB.snapshots.length}`;
+
+  // Commits
+  document.getElementById('commit-msg-a').textContent = snapA.message;
+  document.getElementById('date-a').textContent = new Date(snapA.date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  document.getElementById('commit-msg-b').textContent = snapB.message;
+  document.getElementById('date-b').textContent = new Date(snapB.date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function updatePlayButton() {
+  document.getElementById('play-btn').innerHTML = playing ? '&#9646;&#9646;' : '&#9654;';
+}
+
+// ===================== CONTROLS =====================
+function setupControls() {
+  const playBtn = document.getElementById('play-btn');
+  const slider = document.getElementById('timeline');
+
+  playBtn.addEventListener('click', () => {
+    if (filmTime >= filmDuration && !playing) seekToFilmTime(0);
+    playing = !playing;
+    updatePlayButton();
+  });
+
+  slider.addEventListener('input', () => {
+    const frac = parseInt(slider.value) / 1000;
+    playing = false;
+    updatePlayButton();
+    seekToFilmTime(frac * filmDuration);
+  });
+
+  document.getElementById('duration-select').addEventListener('change', (e) => {
+    const oldFrac = filmDuration > 0 ? filmTime / filmDuration : 0;
+    filmDuration = parseInt(e.target.value);
+    filmTime = oldFrac * filmDuration;
+    seekToFilmTime(filmTime);
+  });
+
+  document.getElementById('playback-mode').addEventListener('change', (e) => {
+    const oldFrac = filmDuration > 0 ? filmTime / filmDuration : 0;
+    playbackMode = e.target.value;
+    filmTime = oldFrac * filmDuration;
+    seekToFilmTime(filmTime);
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') { e.preventDefault(); playBtn.click(); }
+    else if (e.code === 'ArrowRight') {
+      playing = false; updatePlayButton();
+      seekToFilmTime(filmTime + filmDuration / 50);
+    } else if (e.code === 'ArrowLeft') {
+      playing = false; updatePlayButton();
+      seekToFilmTime(filmTime - filmDuration / 50);
+    }
+  });
+
+  document.getElementById('viz-mode').addEventListener('change', (e) => { vizMode = e.target.value; });
+  document.getElementById('text-toggle').addEventListener('change', (e) => { showTextLabels = e.target.checked; });
+
+  // Resize
+  const resizeObserver = new ResizeObserver(() => {
+    resizeCanvas();
+    repoState.a.boundsCache.clear();
+    repoState.b.boundsCache.clear();
+    seekToFilmTime(filmTime);
+    // Precompute bounds for first and last frames
+    for (const rs of [repoState.a, repoState.b]) {
+      if (rs.snapshots.length > 0) {
+        const l0 = computeTreemap(rs.snapshots[0].files, canvas.width, canvas.height / 2, rs.stableFileOrder);
+        rs.boundsCache.set(0, getIslandBounds(l0));
+        const lF = computeTreemap(rs.snapshots[rs.snapshots.length - 1].files, canvas.width, canvas.height / 2, rs.stableFileOrder);
+        rs.boundsCache.set(rs.snapshots.length - 1, getIslandBounds(lF));
+      }
+    }
+  });
+  resizeObserver.observe(document.getElementById('canvas-wrapper'));
+
+  // Tooltip
+  canvas.addEventListener('mousemove', (e) => {
+    const tooltip = document.getElementById('tooltip');
+    const rect = canvas.getBoundingClientRect();
+    const canvasX = e.clientX - rect.left;
+    const canvasY = e.clientY - rect.top;
+    const halfH = canvas.height / 2;
+    const isTop = canvasY < halfH;
+    const rs = isTop ? repoState.a : repoState.b;
+    const layout = rs.cache.prevLayout;
+    if (!layout) { tooltip.style.display = 'none'; return; }
+
+    const cx = canvas.width / 2;
+    const cy = isTop ? halfH / 2 : halfH + halfH / 2;
+    const scale = currentRenderScale;
+    const mx = (canvasX - cx) / scale + cx;
+    const my = (canvasY - cy) / scale + cy + (isTop ? 0 : halfH);
+
+    let found = null;
+    for (const file of layout.files) {
+      const fy = isTop ? file.y : file.y;
+      if (mx >= file.x && mx <= file.x + file.w && my >= fy && my <= fy + file.h) {
+        found = file; break;
+      }
+    }
+
+    if (found) {
+      hoveredFile = found.path;
+      tooltip.innerHTML = `<div class="filepath">${found.path}</div>
+        <div class="detail">${found.lines} lines · ${found.folder}/</div>`;
+      tooltip.style.display = 'block';
+      tooltip.style.left = (e.clientX + 12) + 'px';
+      tooltip.style.top = (e.clientY - 8) + 'px';
+      const tr = tooltip.getBoundingClientRect();
+      if (tr.right > window.innerWidth) tooltip.style.left = (e.clientX - tr.width - 12) + 'px';
+      if (tr.bottom > window.innerHeight) tooltip.style.top = (e.clientY - tr.height - 8) + 'px';
+    } else {
+      hoveredFile = null;
+      tooltip.style.display = 'none';
+    }
+  });
+  canvas.addEventListener('mouseleave', () => {
+    document.getElementById('tooltip').style.display = 'none';
+    hoveredFile = null;
+  });
+}
+
+// ===================== INIT =====================
+async function init() {
+  setupControls();
+  requestAnimationFrame(tick);
+
+  try {
+    const repos = getReposFromUrl();
+    if (!repos) throw new Error('Invalid compare URL. Go to <a href="/">the home page</a>.');
+
+    document.title = `Repoviewer — ${repos.a.owner}/${repos.a.repo} vs ${repos.b.owner}/${repos.b.repo}`;
+    document.getElementById('compare-title').textContent = `${repos.a.repo} vs ${repos.b.repo}`;
+    document.getElementById('tag-a').textContent = repos.a.repo;
+    document.getElementById('tag-b').textContent = repos.b.repo;
+
+    // Load both repos in parallel
+    document.getElementById('loading-msg').textContent = 'Loading both repositories...';
+    const [dataA, dataB] = await Promise.all([
+      loadRepoData(repos.a.owner, repos.a.repo),
+      loadRepoData(repos.b.owner, repos.b.repo),
+    ]);
+
+    // Build state for each repo
+    for (const [key, data] of [['a', dataA], ['b', dataB]]) {
+      const rs = repoState[key];
+      rs.data = data;
+      rs.snapshots = buildSnapshots(data);
+      rs.stableFileOrder = buildStableOrder(rs.snapshots);
+      rs.commitDates = rs.snapshots.map(s => new Date(s.date).getTime());
+      rs.startDate = rs.commitDates[0] || 0;
+      rs.endDate = rs.commitDates[rs.commitDates.length - 1] || 0;
+      rs.totalLinesPerFrame = rs.snapshots.map(snap =>
+        Object.values(snap.files).reduce((s, f) => s + f.lines, 0)
+      );
+      console.log(`[${key}] Built ${rs.snapshots.length} snapshots`);
+    }
+
+    // Compute shared time base: the longer repo's duration in ms
+    const spanA = repoState.a.endDate - repoState.a.startDate;
+    const spanB = repoState.b.endDate - repoState.b.startDate;
+    maxRepoSpan = Math.max(spanA, spanB, 1);
+    console.log(`[compare] Repo A span: ${(spanA / 86400000).toFixed(1)} days, Repo B span: ${(spanB / 86400000).toFixed(1)} days`);
+
+    // Show UI
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('app').style.display = '';
+    resizeCanvas();
+
+    // Precompute island bounds for first and last frames
+    for (const rs of [repoState.a, repoState.b]) {
+      const l0 = computeTreemap(rs.snapshots[0].files, canvas.width, canvas.height / 2, rs.stableFileOrder);
+      rs.boundsCache.set(0, getIslandBounds(l0));
+      const lF = computeTreemap(rs.snapshots[rs.snapshots.length - 1].files, canvas.width, canvas.height / 2, rs.stableFileOrder);
+      rs.boundsCache.set(rs.snapshots.length - 1, getIslandBounds(lF));
+    }
+
+    seekToFilmTime(0);
+
+  } catch (err) {
+    document.getElementById('loading').innerHTML =
+      `<div style="color:#f85149">Error: ${err.message}</div>
+       <div style="font-size:13px;margin-top:8px"><a href="/" style="color:#58a6ff">&larr; Back to home</a></div>`;
+    console.error(err);
+  }
+}
+
+init();
+</script>
+</body>
+</html>
