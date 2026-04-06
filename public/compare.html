@@ -355,6 +355,7 @@ let playbackMode = 'temporal'; // default temporal for comparison
 let zoomOutProgress = 0;
 let vizMode = 'growth';
 let showTextLabels = false;
+let maxRepoSpan = 0; // max(endA - startA, endB - startB) — shared time base
 
 // Per-repo state
 const repoState = {
@@ -404,8 +405,17 @@ function getTimeMapping(ft, snapshots, commitDates, startDate, endDate) {
     const repoTime = commitDates[prevIdx] + (commitDates[nextIdx] - commitDates[prevIdx]) * t;
     return { prevIdx, nextIdx, t, repoTime };
   } else {
-    // Temporal: linear in each repo's own date range (aligned start)
-    const repoTime = startDate + frac * (endDate - startDate);
+    // Temporal: both repos share the same elapsed-days scale.
+    // filmDuration maps to maxRepoSpan (the longer repo's duration).
+    // The shorter repo finishes early and stays at its final state.
+    const elapsed = frac * maxRepoSpan;
+    const repoTime = startDate + elapsed;
+
+    // If this repo is already past its end, clamp to final frame
+    if (repoTime >= endDate) {
+      return { prevIdx: N - 1, nextIdx: N - 1, t: 0, repoTime: endDate };
+    }
+
     let lo = 0, hi = N - 1;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
@@ -1257,6 +1267,12 @@ async function init() {
       );
       console.log(`[${key}] Built ${rs.snapshots.length} snapshots`);
     }
+
+    // Compute shared time base: the longer repo's duration in ms
+    const spanA = repoState.a.endDate - repoState.a.startDate;
+    const spanB = repoState.b.endDate - repoState.b.startDate;
+    maxRepoSpan = Math.max(spanA, spanB, 1);
+    console.log(`[compare] Repo A span: ${(spanA / 86400000).toFixed(1)} days, Repo B span: ${(spanB / 86400000).toFixed(1)} days`);
 
     // Show UI
     document.getElementById('loading').style.display = 'none';
