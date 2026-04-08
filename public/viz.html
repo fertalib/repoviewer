@@ -216,13 +216,33 @@
     animation: spin 0.8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+  #progress-bar {
+    width: 280px;
+    height: 4px;
+    background: #21262d;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  #progress-fill {
+    height: 100%;
+    width: 0%;
+    background: #58a6ff;
+    transition: width 0.2s ease-out;
+  }
+  #progress-detail {
+    font-size: 12px;
+    color: #484f58;
+    font-family: 'JetBrains Mono', monospace;
+  }
 </style>
 </head>
 <body>
 
 <div id="loading">
   <div class="spinner"></div>
-  <div>Loading repository data...</div>
+  <div id="loading-msg">Loading repository data...</div>
+  <div id="progress-bar"><div id="progress-fill"></div></div>
+  <div id="progress-detail"></div>
 </div>
 
 <div id="app" style="display:none">
@@ -461,16 +481,56 @@ function getRepoFromUrl() {
   return null;
 }
 
-async function loadData() {
-  const r = getRepoFromUrl();
-  if (!r) throw new Error('No repository specified. Go to <a href="/">the home page</a> to pick one.');
-  document.title = `Repoviewer — ${r.owner}/${r.repo}`;
-  const res = await fetch(`/api/repo/${r.owner}/${r.repo}`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to fetch repository data (${res.status})`);
+function updateProgress(p) {
+  let pct = 0;
+  let msg = '';
+  let detail = '';
+  switch (p.stage) {
+    case 'repo-info':       pct = 5;  msg = 'Fetching repo info...'; break;
+    case 'tree':            pct = 10; msg = 'Fetching file tree...'; break;
+    case 'commits-list':    pct = 15; msg = 'Fetching commit list...'; break;
+    case 'commits-detail':
+      pct = 15 + (p.current / Math.max(p.total, 1)) * 75;
+      msg = 'Fetching commit details...';
+      detail = `${p.current} / ${p.total}`;
+      break;
+    case 'prs':             pct = 92; msg = 'Fetching pull requests...'; break;
+    case 'done':            pct = 100; msg = 'Done.'; break;
   }
-  return res.json();
+  document.getElementById('loading-msg').textContent = msg;
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('progress-detail').textContent = detail;
+}
+
+function loadData() {
+  const r = getRepoFromUrl();
+  if (!r) return Promise.reject(new Error('No repository specified. Go to <a href="/">the home page</a> to pick one.'));
+  document.title = `Repoviewer — ${r.owner}/${r.repo}`;
+  return new Promise((resolve, reject) => {
+    const es = new EventSource(`/api/repo/${r.owner}/${r.repo}/stream`);
+    let settled = false;
+    es.addEventListener('progress', (e) => {
+      try { updateProgress(JSON.parse(e.data)); } catch {}
+    });
+    es.addEventListener('done', (e) => {
+      settled = true;
+      es.close();
+      try { resolve(JSON.parse(e.data)); }
+      catch (err) { reject(err); }
+    });
+    es.addEventListener('fail', (e) => {
+      settled = true;
+      es.close();
+      let msg = 'Failed to fetch repository data';
+      try { msg = JSON.parse(e.data).message || msg; } catch {}
+      reject(new Error(msg));
+    });
+    es.onerror = () => {
+      if (settled) return;
+      es.close();
+      reject(new Error('Connection to server lost'));
+    };
+  });
 }
 
 // ===================== PATCH PARSING =====================

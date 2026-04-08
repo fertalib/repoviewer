@@ -156,9 +156,9 @@ app.get('/api/repo/:owner/:repo', async (req, res) => {
   }
 
   try {
-    const data = await fetchRepoData(owner, repo, token, (msg) => {
+    const data = await fetchRepoData(owner, repo, token, (p) => {
       // Progress logging for server console
-      process.stdout.write(`\r[${cacheKey}] ${msg}`);
+      process.stdout.write(`\r[${cacheKey}] ${p.message || p.stage}`);
     });
     cache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL });
     console.log(`\n[${cacheKey}] Cached (${data.commits.length} commits)`);
@@ -167,6 +167,51 @@ app.get('/api/repo/:owner/:repo', async (req, res) => {
     console.error(`\n[${cacheKey}] Error:`, err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// --- API: stream repo data via SSE with progress events ---
+app.get('/api/repo/:owner/:repo/stream', async (req, res) => {
+  const { owner, repo } = req.params;
+  const token = req.githubToken || process.env.GITHUB_TOKEN;
+  if (!token) return res.status(401).end();
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const send = (event, data) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  // Keepalive every 15s to prevent proxy/browser timeout on slow fetches
+  const keepalive = setInterval(() => res.write(': ping\n\n'), 15000);
+  req.on('close', () => clearInterval(keepalive));
+
+  const cacheKey = `${owner}/${repo}`;
+  const cached = cache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    send('progress', { stage: 'done', message: 'Loaded from cache.' });
+    send('done', cached.data);
+    clearInterval(keepalive);
+    return res.end();
+  }
+
+  try {
+    const data = await fetchRepoData(owner, repo, token, (p) => {
+      send('progress', p);
+      process.stdout.write(`\r[${cacheKey}] ${p.message || p.stage}`);
+    });
+    cache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL });
+    console.log(`\n[${cacheKey}] Cached (${data.commits.length} commits)`);
+    send('done', data);
+  } catch (err) {
+    console.error(`\n[${cacheKey}] Error:`, err.message);
+    send('fail', { message: err.message });
+  }
+  clearInterval(keepalive);
+  res.end();
 });
 
 // --- Serve viz page for /viz/:owner/:repo ---
