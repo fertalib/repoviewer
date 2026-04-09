@@ -219,13 +219,49 @@
     animation: spin 0.8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .progress-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #8b949e;
+  }
+  .progress-row .tag { width: 14px; text-align: right; font-weight: 600; }
+  .progress-row .tag.a { color: #58a6ff; }
+  .progress-row .tag.b { color: #f0883e; }
+  .progress-row .bar {
+    width: 240px;
+    height: 4px;
+    background: #21262d;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .progress-row .fill {
+    height: 100%;
+    width: 0%;
+    transition: width 0.2s ease-out;
+  }
+  .progress-row .fill.a { background: #58a6ff; }
+  .progress-row .fill.b { background: #f0883e; }
+  .progress-row .detail { font-size: 11px; color: #484f58; min-width: 80px; }
 </style>
 </head>
 <body>
 
 <div id="loading">
   <div class="spinner"></div>
-  <div id="loading-msg">Loading repository data...</div>
+  <div id="loading-msg">Loading both repositories...</div>
+  <div class="progress-row">
+    <span class="tag a">A</span>
+    <div class="bar"><div class="fill a" id="progress-fill-a"></div></div>
+    <span class="detail" id="progress-detail-a"></span>
+  </div>
+  <div class="progress-row">
+    <span class="tag b">B</span>
+    <div class="bar"><div class="fill b" id="progress-fill-b"></div></div>
+    <span class="detail" id="progress-detail-b"></span>
+  </div>
 </div>
 
 <div id="app" style="display:none">
@@ -380,13 +416,52 @@ function getReposFromUrl() {
   return null;
 }
 
-async function loadRepoData(owner, repo) {
-  const res = await fetch(`/api/repo/${owner}/${repo}`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to fetch ${owner}/${repo} (${res.status})`);
+function updateProgress(slot, p) {
+  let pct = 0;
+  let detail = '';
+  switch (p.stage) {
+    case 'repo-info':    pct = 5;  detail = 'repo info'; break;
+    case 'tree':         pct = 10; detail = 'file tree'; break;
+    case 'commits-list': pct = 15; detail = 'commit list'; break;
+    case 'commits-detail':
+      pct = 15 + (p.current / Math.max(p.total, 1)) * 75;
+      detail = `${p.current}/${p.total} commits`;
+      break;
+    case 'prs':          pct = 92; detail = 'pull requests'; break;
+    case 'done':         pct = 100; detail = 'done'; break;
   }
-  return res.json();
+  const fill = document.getElementById('progress-fill-' + slot);
+  const det = document.getElementById('progress-detail-' + slot);
+  if (fill) fill.style.width = pct + '%';
+  if (det) det.textContent = detail;
+}
+
+function loadRepoData(owner, repo, slot) {
+  return new Promise((resolve, reject) => {
+    const es = new EventSource(`/api/repo/${owner}/${repo}/stream`);
+    let settled = false;
+    es.addEventListener('progress', (e) => {
+      try { updateProgress(slot, JSON.parse(e.data)); } catch {}
+    });
+    es.addEventListener('done', (e) => {
+      settled = true;
+      es.close();
+      try { resolve(JSON.parse(e.data)); }
+      catch (err) { reject(err); }
+    });
+    es.addEventListener('fail', (e) => {
+      settled = true;
+      es.close();
+      let msg = `Failed to fetch ${owner}/${repo}`;
+      try { msg = JSON.parse(e.data).message || msg; } catch {}
+      reject(new Error(msg));
+    });
+    es.onerror = () => {
+      if (settled) return;
+      es.close();
+      reject(new Error(`Connection lost while fetching ${owner}/${repo}`));
+    };
+  });
 }
 
 // ===================== TIME MAPPING (parameterized) =====================
@@ -1249,8 +1324,8 @@ async function init() {
     // Load both repos in parallel
     document.getElementById('loading-msg').textContent = 'Loading both repositories...';
     const [dataA, dataB] = await Promise.all([
-      loadRepoData(repos.a.owner, repos.a.repo),
-      loadRepoData(repos.b.owner, repos.b.repo),
+      loadRepoData(repos.a.owner, repos.a.repo, 'a'),
+      loadRepoData(repos.b.owner, repos.b.repo, 'b'),
     ]);
 
     // Build state for each repo
