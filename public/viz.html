@@ -1529,6 +1529,13 @@ async function init() {
     document.getElementById('app').style.display = '';
     document.getElementById('repo-name').textContent =
       `${repoData.repo.owner}/${repoData.repo.name}`;
+    if (repoData.repo.truncated) {
+      const h = document.getElementById('repo-name');
+      const note = document.createElement('div');
+      note.style.cssText = 'font-size:10px;font-weight:400;color:#f0883e;margin-top:2px';
+      note.textContent = `showing ${repoData.repo.shownCommits.toLocaleString()} of ${repoData.repo.totalCommits.toLocaleString()} commits`;
+      h.parentNode.appendChild(note);
+    }
 
     // Size canvas after app is visible (wrapper needs layout)
     resizeCanvas();
