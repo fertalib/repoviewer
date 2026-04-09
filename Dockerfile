@@ -6,4 +6,6 @@ COPY package.json package-lock.json* ./
 RUN npm install --production
 COPY . .
 EXPOSE 8080
+# Leave ~100MB headroom for git subprocesses on small (512MiB) Cloud Run instances.
+ENV NODE_OPTIONS="--max-old-space-size=384"
 CMD ["node", "server.js"]
