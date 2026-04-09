@@ -38,7 +38,14 @@ async function loadRepo(owner, repo, token, onProgress) {
   }
 
   // Fetch via git (ephemeral clone + parse), incremental if we have prior data
-  const data = await fetchRepoDataViaGit(owner, repo, token, onProgress, { existing: disk || undefined });
+  let data;
+  try {
+    data = await fetchRepoDataViaGit(owner, repo, token, onProgress, { existing: disk || undefined });
+  } catch (err) {
+    console.warn(`[${cacheKey}] git fetch failed, falling back to REST: ${err.message}`);
+    onProgress?.({ stage: 'clone', message: `Git clone failed (${err.message.slice(0, 80)}) — falling back to REST...` });
+    data = await fetchRepoData(owner, repo, token, onProgress);
+  }
   await writeDiskCache(owner, repo, data);
   cache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL });
   return data;
