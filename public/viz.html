@@ -486,13 +486,14 @@ function updateProgress(p) {
   let msg = '';
   let detail = '';
   switch (p.stage) {
+    case 'clone':           pct = 8;  msg = p.message || 'Cloning repository...'; break;
     case 'repo-info':       pct = 5;  msg = 'Fetching repo info...'; break;
-    case 'tree':            pct = 10; msg = 'Fetching file tree...'; break;
+    case 'tree':            pct = 12; msg = 'Reading file tree...'; break;
     case 'commits-list':    pct = 15; msg = 'Fetching commit list...'; break;
     case 'commits-detail':
       pct = 15 + (p.current / Math.max(p.total, 1)) * 75;
-      msg = 'Fetching commit details...';
-      detail = `${p.current} / ${p.total}`;
+      msg = 'Parsing commits...';
+      detail = p.total ? `${p.current} / ${p.total}` : `${p.current}`;
       break;
     case 'prs':             pct = 92; msg = 'Fetching pull requests...'; break;
     case 'done':            pct = 100; msg = 'Done.'; break;

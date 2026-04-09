@@ -420,12 +420,13 @@ function updateProgress(slot, p) {
   let pct = 0;
   let detail = '';
   switch (p.stage) {
+    case 'clone':        pct = 8;  detail = 'cloning'; break;
     case 'repo-info':    pct = 5;  detail = 'repo info'; break;
-    case 'tree':         pct = 10; detail = 'file tree'; break;
+    case 'tree':         pct = 12; detail = 'file tree'; break;
     case 'commits-list': pct = 15; detail = 'commit list'; break;
     case 'commits-detail':
       pct = 15 + (p.current / Math.max(p.total, 1)) * 75;
-      detail = `${p.current}/${p.total} commits`;
+      detail = p.total ? `${p.current}/${p.total} commits` : `${p.current} commits`;
       break;
     case 'prs':          pct = 92; detail = 'pull requests'; break;
     case 'done':         pct = 100; detail = 'done'; break;
