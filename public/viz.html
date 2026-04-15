@@ -595,11 +595,22 @@ function applyPatch(lineArray, patch, date, sha) {
 function buildSnapshots(data) {
   // fileStates: Map<filepath, [{date, sha}]> where index = line number
   const fileStates = new Map();
+  // frozenBlame: Map<filepath, {lines, blame}> — shared refs for unchanged files.
+  // Only files touched in a commit get a new blame array; everything else
+  // reuses the reference from the previous snapshot (structural sharing).
+  // This drops memory from O(snapshots × files × lines) → O(snapshots × changedFiles × lines + files × lines).
+  const frozenBlame = new Map();
   const snaps = [];
 
+  // Index PRs by merge SHA for O(1) lookup instead of O(n) find per commit
+  const prBySha = new Map();
+  for (const p of data.pullRequests) {
+    if (p.mergeCommitSha) prBySha.set(p.mergeCommitSha, p);
+  }
+
   for (const commit of data.commits) {
-    // Track which files were added/deleted/modified in this commit
     const changed = { added: [], removed: [], modified: [] };
+    const touchedPaths = new Set();
 
     for (const file of commit.files) {
       const key = file.filename;
@@ -608,39 +619,47 @@ function buildSnapshots(data) {
         const lines = Array(file.additions).fill({ date: commit.date, sha: commit.sha });
         fileStates.set(key, lines);
         changed.added.push(key);
+        touchedPaths.add(key);
 
       } else if (file.status === 'removed') {
         changed.removed.push(key);
         fileStates.delete(key);
+        frozenBlame.delete(key);
+        touchedPaths.add(key);
 
       } else if (file.status === 'renamed') {
         const old = fileStates.get(file.previous_filename) || [];
         fileStates.delete(file.previous_filename);
+        frozenBlame.delete(file.previous_filename);
         const newLines = applyPatch(old, file.patch, commit.date, commit.sha);
         fileStates.set(key, newLines);
         changed.removed.push(file.previous_filename);
         changed.added.push(key);
+        touchedPaths.add(key);
+        touchedPaths.add(file.previous_filename);
 
       } else {
-        // modified, changed, etc.
         const old = fileStates.get(key) || [];
         const newLines = applyPatch(old, file.patch, commit.date, commit.sha);
         fileStates.set(key, newLines);
         changed.modified.push(key);
+        touchedPaths.add(key);
       }
     }
 
-    // Save snapshot (deep copy of file states)
+    // Build snapshot with structural sharing — only copy touched files
     const filesSnapshot = {};
     for (const [path, lines] of fileStates) {
-      filesSnapshot[path] = {
-        lines: lines.length,
-        blame: [...lines], // array of {date, sha}
-      };
+      if (touchedPaths.has(path)) {
+        // File changed: create new blame snapshot and cache it
+        const entry = { lines: lines.length, blame: [...lines] };
+        frozenBlame.set(path, entry);
+        filesSnapshot[path] = entry;
+      } else {
+        // File unchanged: reuse cached reference (zero allocation)
+        filesSnapshot[path] = frozenBlame.get(path);
+      }
     }
-
-    // Find associated PR
-    const pr = data.pullRequests.find(p => p.mergeCommitSha === commit.sha);
 
     snaps.push({
       sha: commit.sha,
@@ -649,7 +668,7 @@ function buildSnapshots(data) {
       author: commit.author,
       files: filesSnapshot,
       changed,
-      pr: pr || null,
+      pr: prBySha.get(commit.sha) || null,
     });
   }
 
