@@ -4,6 +4,8 @@ import jwt from 'jsonwebtoken';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { fetchRepoData } from './lib/fetch-repo.js';
+import { fetchRepoDataViaGit } from './lib/fetch-repo-git.js';
+import { readDiskCache, writeDiskCache } from './lib/disk-cache.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -18,6 +20,36 @@ const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
 // In-memory cache: key -> { data, expiresAt }
 const cache = new Map();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
+// Disk cache TTL: 24 hours. Beyond this we still reuse as incremental base.
+const DISK_CACHE_FRESH_MS = 24 * 60 * 60 * 1000;
+
+async function loadRepo(owner, repo, token, onProgress) {
+  const cacheKey = `${owner}/${repo}`;
+  // Memory cache
+  const mem = cache.get(cacheKey);
+  if (mem && mem.expiresAt > Date.now()) return mem.data;
+
+  // Disk cache (fresh → return as-is; stale → use as incremental base)
+  const disk = await readDiskCache(owner, repo);
+  const diskFresh = disk && disk.fetchedAt && (Date.now() - new Date(disk.fetchedAt).getTime()) < DISK_CACHE_FRESH_MS;
+  if (diskFresh) {
+    cache.set(cacheKey, { data: disk, expiresAt: Date.now() + CACHE_TTL });
+    return disk;
+  }
+
+  // Fetch via git (ephemeral clone + parse), incremental if we have prior data
+  let data;
+  try {
+    data = await fetchRepoDataViaGit(owner, repo, token, onProgress, { existing: disk || undefined });
+  } catch (err) {
+    console.warn(`[${cacheKey}] git fetch failed, falling back to REST: ${err.message}`);
+    onProgress?.({ stage: 'clone', message: `Git clone failed (${err.message.slice(0, 80)}) — falling back to REST...` });
+    data = await fetchRepoData(owner, repo, token, onProgress);
+  }
+  await writeDiskCache(owner, repo, data);
+  cache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL });
+  return data;
+}
 
 // --- Auth middleware ---
 function authMiddleware(req, _res, next) {
@@ -149,19 +181,11 @@ app.get('/api/repo/:owner/:repo', async (req, res) => {
 
   const cacheKey = `${owner}/${repo}`;
 
-  // Check cache
-  const cached = cache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return res.json(cached.data);
-  }
-
   try {
-    const data = await fetchRepoData(owner, repo, token, (p) => {
-      // Progress logging for server console
+    const data = await loadRepo(owner, repo, token, (p) => {
       process.stdout.write(`\r[${cacheKey}] ${p.message || p.stage}`);
     });
-    cache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL });
-    console.log(`\n[${cacheKey}] Cached (${data.commits.length} commits)`);
+    console.log(`\n[${cacheKey}] Served (${data.commits.length} commits)`);
     res.json(data);
   } catch (err) {
     console.error(`\n[${cacheKey}] Error:`, err.message);
@@ -190,21 +214,13 @@ app.get('/api/repo/:owner/:repo/stream', async (req, res) => {
   req.on('close', () => clearInterval(keepalive));
 
   const cacheKey = `${owner}/${repo}`;
-  const cached = cache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    send('progress', { stage: 'done', message: 'Loaded from cache.' });
-    send('done', cached.data);
-    clearInterval(keepalive);
-    return res.end();
-  }
 
   try {
-    const data = await fetchRepoData(owner, repo, token, (p) => {
+    const data = await loadRepo(owner, repo, token, (p) => {
       send('progress', p);
       process.stdout.write(`\r[${cacheKey}] ${p.message || p.stage}`);
     });
-    cache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL });
-    console.log(`\n[${cacheKey}] Cached (${data.commits.length} commits)`);
+    console.log(`\n[${cacheKey}] Served (${data.commits.length} commits)`);
     send('done', data);
   } catch (err) {
     console.error(`\n[${cacheKey}] Error:`, err.message);
