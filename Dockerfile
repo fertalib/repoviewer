@@ -6,6 +6,7 @@ COPY package.json package-lock.json* ./
 RUN npm install --production
 COPY . .
 EXPOSE 8080
-# Leave ~100MB headroom for git subprocesses on small (512MiB) Cloud Run instances.
-ENV NODE_OPTIONS="--max-old-space-size=384"
+# V8 heap limit. Leaves headroom for git subprocesses and native allocations.
+# Tuned for 2GiB Cloud Run instances (service is currently deployed at that size).
+ENV NODE_OPTIONS="--max-old-space-size=1536"
 CMD ["node", "server.js"]
